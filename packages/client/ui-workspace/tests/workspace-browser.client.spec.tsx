@@ -199,12 +199,12 @@ describe('WorkspaceBrowser', () => {
     const list = browser.view.container.querySelector<HTMLElement>('[data-sidebar-list-area]')!
     expect(bindScrollerRef).toHaveBeenLastCalledWith(list)
     rerender(browser, { wide: false })
-    expect(bindScrollerRef).toHaveBeenLastCalledWith(null)
+    expect(bindScrollerRef.mock.lastCall?.[0]).toBeNull()
     expect(browser.view.container.querySelector('[data-sidebar-list-area]')).toBe(list)
     rerender(browser, { wide: true })
     expect(bindScrollerRef).toHaveBeenLastCalledWith(list)
     browser.view.unmount()
-    expect(bindScrollerRef).toHaveBeenLastCalledWith(null)
+    expect(bindScrollerRef.mock.lastCall?.[0]).toBeNull()
   })
 
   it.each(['workspace', 'flat', 'ungrouped'] as const)('keeps %s recency independent of arrival order and saved manual positions', (mode) => {

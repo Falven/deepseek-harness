@@ -279,7 +279,7 @@ describe('WorktreeProgress removed worktree', () => {
 
     const retry = Promise.withResolvers<string | undefined>()
     b.restore.mockReturnValueOnce(retry.promise)
-    fireEvent.click(restore)
+    fireEvent.click(b.view.getByRole('button', { name: en['missing.restore'] }))
     expect(b.view.getByRole('region', { name: en['restoration.title'] })).toBeTruthy()
     await act(async () => { retry.resolve(undefined) })
     expect(b.restore).toHaveBeenCalledTimes(2)

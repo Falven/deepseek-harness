@@ -187,11 +187,11 @@ it.each(['signed-out', 'unloaded'] as const)('uses a timed Toast without the sha
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-it.each([en, zh])('takes the balance Modal down when the account signs out', (copy) => {
+it.each([en, zh])('takes the balance Modal down when the account signs out', async (copy) => {
   const spies = pageSpies()
   const { dismiss, setStatus } = mount({ pages: spies.pages, copy })
   expect(screen.getByRole('dialog', { name: copy.quotaTitle })).toBeTruthy()
-  act(() => { setStatus('signed-out') })
+  await act(async () => { setStatus('signed-out') })
   expect(dismiss).toHaveBeenCalledOnce()
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
