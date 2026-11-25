@@ -106,8 +106,28 @@ export type {
 export type { ArbitrateKey, ArbitrateOutcome, DraftInput, DraftQuote, DraftReference, DraftSnapshot, ReferenceInsert, TokenSpan } from './contract/draft-editor.ts'
 export type { ComposerBlock, ComposerBlocks } from './contract/composer-blocks.ts'
 
+/** Optional embedding presentation; native behavior remains the default. */
+export interface ConversationPresentation {
+  /** Copy for the native default and hero input placeholders. */
+  readonly inputPlaceholder?: () => string
+}
+
 declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Begins at submission. Listeners capture local context and call next() synchronously;
+     * its promise supplies content after command adjudication and draft serialization.
+     * @param payload - Session whose serialized prompt is being prepared.
+     * @mode waterfall
+     */
+    'conversation/prepare-content'(
+      payload: { sessionId: import('@deepseek-ai/dsh-session/types').SessionId },
+      next: () => Promise<Parameters<import('@deepseek-ai/dsh-api-session-controller/client').SessionFace['prompt']>[0]>,
+    ): Promise<Parameters<import('@deepseek-ai/dsh-api-session-controller/client').SessionFace['prompt']>[0]>
+  }
   interface Context {
+    /** Optional shell preference without replacing native conversation content. */
+    conversationPresentation?: ConversationPresentation
     /** Scope-addressed Conversation actions and per-Session input registry. */
     conversation: import('./service.ts').IConversation
     /** Target-neutral Conversation registries and per-Session assembly. */

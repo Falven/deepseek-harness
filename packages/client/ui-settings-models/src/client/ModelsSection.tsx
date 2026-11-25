@@ -26,7 +26,7 @@ import type { ReactNode } from 'react'
 import { Button, IconPlusOutlineRegular, Modal, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { LlmNativeAuth, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
-// Type-only: pulls this package's SlotMap merge (the two Models child slots).
+// Type-only: pulls this package's Models child slots into the program.
 import type {} from './slot-contract.ts'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, protocolChoices, providerUsable, reasoningLevelChoices } from './store.ts'
@@ -60,7 +60,7 @@ export interface ModelsSectionInjected {
 type AddMode = 'catalog' | 'custom'
 
 /** The child slots this section declares and dispatches (see ./slot-contract.ts). */
-type ModelsChildSlots = 'settings.models.provider-card' | 'settings.models.footer'
+type ModelsChildSlots = 'settings.models.provider-card' | 'settings.models.provider-authentication' | 'settings.models.footer'
 
 /** The child-slot dispatch function the renderer binds for the section. */
 type ModelsRenderSlot = PropsRenderSlots<ModelsChildSlots>['renderSlot']
@@ -88,6 +88,8 @@ export interface ProviderIdentity {
 interface EditorTarget extends ProviderIdentity {
   settingsNs: string
   settingsPath: readonly string[]
+  /** A native editor that the adapter's own profile can reuse. */
+  editor?: NonNullable<ProviderRow['entry']['editor']>
   /** Writable credential identified under this page's conventional reference. */
   credentialRef?: string
   /** The adapter reports this route as one it does not ship (see {@link ProviderEditorProps.declared}). */
@@ -115,7 +117,7 @@ interface CatalogDraft {
 /** Values that vary around the shared provider-editor rendering. */
 interface ProviderEditorRenderProps extends Pick<
   ProviderEditorProps,
-  'namespace' | 'schema' | 'operations' | 't' | 'readOnly' | 'onClose'
+  'namespace' | 'schema' | 'operations' | 't' | 'readOnly' | 'onClose' | 'renderAuthentication'
 > {
   target: EditorTarget
   row: ProviderRow
@@ -128,6 +130,7 @@ function renderProviderEditor({ target, row, ...props }: ProviderEditorRenderPro
       provider={target.provider}
       displayName={target.displayName}
       settingsPath={target.settingsPath}
+      {...target.editor === undefined ? {} : { editor: target.editor }}
       {...target.declared === true ? { declared: true } : {}}
       {...target.defaultBaseURL === undefined ? {} : { defaultBaseURL: target.defaultBaseURL }}
       {...target.baseURLEnv === undefined ? {} : { baseURLEnv: target.baseURLEnv }}
@@ -209,6 +212,7 @@ function targetOf(row: ProviderRow): EditorTarget {
     displayName: row.entry.displayName,
     settingsNs: row.entry.settingsNs,
     settingsPath: row.entry.settingsPath,
+    ...row.entry.editor === undefined ? {} : { editor: row.entry.editor },
     ...credentialRef === undefined ? {} : { credentialRef },
     // Only declared routes may expose route-owned fields.
     ...row.entry.declared === true ? { declared: true } : {},
@@ -446,6 +450,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   schema,
                   operations,
                   t,
+                  renderAuthentication: renderSlot,
                   readOnly: !state.writable,
                   onClose: (changed) => { closeSetup(changed, target) },
                 })}
@@ -559,6 +564,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   schema,
                   operations,
                   t,
+                  renderAuthentication: renderSlot,
                   readOnly: !state.writable,
                   onClose: (changed) => { closeEditor(changed, target) },
                 })
@@ -645,7 +651,9 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                       namespace={draft.namespace}
                       schema={schema}
                       settingsPath={draft.target.settingsPath}
+                      {...draft.target.editor === undefined ? {} : { editor: draft.target.editor }}
                       operations={operations}
+                      renderAuthentication={renderSlot}
                       {...draft.target.defaultBaseURL === undefined ? {} : { defaultBaseURL: draft.target.defaultBaseURL }}
                       {...draft.target.baseURLEnv === undefined ? {} : { baseURLEnv: draft.target.baseURLEnv }}
                       {...draft.target.nativeAuth === undefined ? {} : { nativeAuth: draft.target.nativeAuth }}

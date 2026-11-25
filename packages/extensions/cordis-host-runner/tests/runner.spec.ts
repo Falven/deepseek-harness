@@ -543,6 +543,26 @@ describe('dynamic runner teardown', () => {
 })
 
 describe('render failure reports', () => {
+  it('attributes delayed render feedback to the source captured at activation', async () => {
+    const { ctx, runner } = await setup()
+    ctx.on('cordis/run-source', (_request, next) => ({ ...next(), origin: 'captured' }))
+    const steer = vi.spyOn(AGENT_A, 'steer')
+    const { pluginId, packageId } = define(runner, {
+      sessionId: AGENT_A.id, name: 'ui', purpose: 'renders', client: CLIENT_CODE,
+    })
+    const started = await runner.runHostHalf(AGENT_A, pluginId, packageId, 'run', null, false)
+    if (!started.ok) throw new Error(started.message)
+
+    await runner.reportRenderFailure(
+      AGENT_A, pluginId, started.pluginRunId,
+      { slot: 'settings.section', message: 'boom', abdicated: true },
+    )
+    expect(steer).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ origin: 'captured' }),
+    }))
+    steer.mockRestore()
+  })
+
   it('keeps the last report per package and shows it to a snapshot reader', async () => {
     const { runner } = await setup()
     const { pluginId, packageId } = define(runner, {

@@ -15,7 +15,7 @@
  * @module
  */
 
-import { Client } from '@modelcontextprotocol/client'
+import { Client, type Transport } from '@modelcontextprotocol/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import { assertNever, deepEqualJson, type JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -31,7 +31,7 @@ import { McpTemplateBinding } from './credentials.ts'
 import { MissingTemplateValue } from './templates.ts'
 import { McpToolRegistrationError, syncTools } from './tools.ts'
 import { McpToolLoader } from './tool-loading.ts'
-import type { ToolDisposers } from './tools.ts'
+import type { ToolBridgeOptions, ToolDisposers } from './tools.ts'
 import type { Config } from './index.ts'
 
 /** Automatic reconnect policy for one MCP server connection. */
@@ -119,6 +119,14 @@ export interface ConnectionHandle extends ServerContext {
   dispose(): Promise<void>
 }
 
+/** Host adapters around the native connection and tool registry. */
+export interface ConnectionOptions extends Pick<ToolBridgeOptions, 'toolDefinition' | 'withClient'> {
+  /** Construct one transport for the current connection generation. */
+  createTransport?: (signal: AbortSignal) => Transport | Promise<Transport>
+  /** SDK client capabilities advertised during initialization. */
+  capabilities?: NonNullable<ConstructorParameters<typeof Client>[1]>['capabilities']
+}
+
 /**
  * Start the supervised connection for one MCP server and keep it alive per
  * the reconnect policy. The first attempt starts in a microtask; the caller
@@ -129,10 +137,12 @@ export interface ConnectionHandle extends ServerContext {
  * @param policy - Resolved reconnect policy from {@link resolveReconnectPolicy}.
  * @param status - Instance status cell this supervisor publishes transitions to.
  * @param oauth - optional passive grant and refresh provider.
+ * @param options - optional host adapters for this supervisor.
  * @returns Handle with a `ready` promise for startup-await and a `dispose` for teardown.
  */
 export function startConnection(
   ctx: Context, config: Config, policy: ResolvedReconnectPolicy, status: McpStatusCell, oauth?: McpOAuthCredentials,
+  options: ConnectionOptions = {},
 ): ConnectionHandle {
   const label = `mcp-client(${config.serverName})`
   const binding = new McpTemplateBinding(ctx, config)
@@ -218,6 +228,8 @@ export function startConnection(
           serverName: config.serverName,
           toolCallTimeoutMs: config.toolCallTimeoutMs,
           signal,
+          ...options.toolDefinition === undefined ? {} : { toolDefinition: options.toolDefinition },
+          ...options.withClient === undefined ? {} : { withClient: options.withClient },
           ...binding.redacting ? { redact: (text: string) => binding.redact(text) } : {},
           ...loader === undefined ? {} : { loader },
         }, disposers, () => isCurrent(record))
@@ -320,7 +332,7 @@ export function startConnection(
   async function connectGeneration(): Promise<void> {
     if (isStopped()) return
     const client = new Client({ name: 'dsh-mcp-client', version: '0.0.1' }, {
-      capabilities: {}, versionNegotiation: { mode: 'auto' },
+      capabilities: options.capabilities ?? {}, versionNegotiation: { mode: 'auto' },
       listChanged: { tools: { autoRefresh: false, debounceMs: 0, onChanged: () => { void refreshTools() } } },
     })
     const record: Generation = { wire: new McpGeneration(client, config.closeTimeoutMs, error => diagnostic(error, 'cleanup')) }
@@ -364,7 +376,7 @@ export function startConnection(
       await record.wire.connect(resolved, remaining(), auth?.fetch, auth === undefined ? undefined : {
         ...auth.authProvider,
         token: async () => binding.remember(await auth.authProvider.token()),
-      })
+      }, options.createTransport)
       if (!isCurrent(record)) return
       const text = client.getInstructions()?.trimEnd() ?? ''
       const instructions = text ? `### MCP server: ${config.serverName}\n\n${text}` : ''
@@ -415,28 +427,30 @@ export function startConnection(
         if (record?.connectedAt === undefined) throw new McpToolError(`${label}: server is disconnected`, 'MCP_SERVER_UNAVAILABLE')
         try {
           return await record.wire.run(async (signal) => {
-            const options = { signal: AbortSignal.any([signal, exec.signal]), timeout: config.toolCallTimeoutMs }
-            const generation = record.wire.client
-            // The SDK answers an unadvertised capability with the same empty page, but
-            // writes a console.debug line to stdout, which the ACP profile reserves for JSON-RPC.
-            const listable = generation.getServerCapabilities()?.resources !== undefined
-            switch (request.method) {
-              case 'resources/list':
-                return listable
-                  ? await generation.listResources(
-                    request.cursor === undefined ? undefined : { cursor: request.cursor }, options,
-                  ) as JsonValue
-                  : { resources: [] }
-              case 'resources/templates/list':
-                return listable
-                  ? await generation.listResourceTemplates(
-                    request.cursor === undefined ? undefined : { cursor: request.cursor }, options,
-                  ) as JsonValue
-                  : { resourceTemplates: [] }
-              case 'resources/read': return await generation.readResource({ uri: request.uri }, options) as JsonValue
-              /* v8 ignore next -- exhaustive over the closed resource request union */
-              default: return assertNever(request)
+            const callOptions = { signal: AbortSignal.any([signal, exec.signal]), timeout: config.toolCallTimeoutMs }
+            const run = async (client: Client): Promise<JsonValue> => {
+              // The SDK answers an unadvertised capability with the same empty page, but
+              // writes a console.debug line to stdout, which the ACP profile reserves for JSON-RPC.
+              const listable = client.getServerCapabilities()?.resources !== undefined
+              switch (request.method) {
+                case 'resources/list':
+                  return listable
+                    ? await client.listResources(
+                      request.cursor === undefined ? undefined : { cursor: request.cursor }, callOptions,
+                    ) as JsonValue
+                    : { resources: [] }
+                case 'resources/templates/list':
+                  return listable
+                    ? await client.listResourceTemplates(
+                      request.cursor === undefined ? undefined : { cursor: request.cursor }, callOptions,
+                    ) as JsonValue
+                    : { resourceTemplates: [] }
+                case 'resources/read': return await client.readResource({ uri: request.uri }, callOptions) as JsonValue
+                /* v8 ignore next -- exhaustive over the closed resource request union */
+                default: return assertNever(request)
+              }
             }
+            return options.withClient === undefined ? run(record.wire.client) : options.withClient(record.wire.client, exec, run)
           })
         } catch (error) {
           exec.signal.throwIfAborted()

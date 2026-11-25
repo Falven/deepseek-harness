@@ -584,7 +584,7 @@ describe('canOpenOf', () => {
 describe('createList', () => {
   it('passes the session, the absolute path, and the signal through, and keeps entries and truncation', async () => {
     const listing: WorkspaceDirectoryListing = {
-      path: 'src',
+      absolutePath: `${ROOT}/src`,
       entries: [{ name: 'a.ts', type: 'file', size: 3 }],
       truncated: true,
     }

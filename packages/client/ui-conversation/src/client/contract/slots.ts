@@ -363,6 +363,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * to the document body because the docked composer contains them.
      */
     'conversation.input.permission': { kind: 'single'; scope: 'session'; owner: InputControlOwnerProps }
+    /** Optional Send glyph; native glyph when absent. */
+    'conversation.input.send.icon': { kind: 'single'; scope: 'session-maybe' }
+    /** Optional Stop glyph; native glyph when absent. */
+    'conversation.input.stop.icon': { kind: 'single'; scope: 'session-maybe' }
     /**
      * Model selector inside the composer tool row. When expanded controls cannot
      * share a line, the row sets --dsh-composer-model-text-display to none and
@@ -497,6 +501,8 @@ export interface ConversationShellInjected {
 
 /** Business callbacks injected into the shared Conversation content. */
 export interface ConversationInjected {
+  /** Copy for the native default and hero input placeholders. */
+  inputPlaceholder?: (() => string) | undefined
   /**
    * Move this occurrence's draft text and attachments to another Session. Both Sessions must be retained; a draft
    * with a submission in flight stays where it is.
@@ -619,6 +625,8 @@ export type ComposerFileIntake = (target: ComposerFileIntakeTarget) => () => voi
 export interface ComposerBarInjected {
   /** Document paste routing across mounted composers. */
   registerFileIntake: ComposerFileIntake
+  /** Copy for the native default and hero input placeholders. */
+  inputPlaceholder?: (() => string) | undefined
   keyboard: ComposerKeyboard | undefined
   /**
    * Register one picked batch; resolves to the rejection copy or null. Where
@@ -683,6 +691,8 @@ const baseComposerChildren = {
 /** Child slots owned by the built-in input bar. */
 export const inputBarChildren = {
   ...baseComposerChildren,
+  'conversation.input.send.icon': { kind: 'single', scope: 'session-maybe' },
+  'conversation.input.stop.icon': { kind: 'single', scope: 'session-maybe' },
   'conversation.input.placeholder': { kind: 'chain', scope: 'session', inline: true },
 } as const satisfies ChildrenDecl
 

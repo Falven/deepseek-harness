@@ -23,7 +23,7 @@ export function ConversationContent(props: ConversationContentProps) {
   const {
     sessionId, phase, hero, useSession, useSessions, useSessionStatus,
     useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,
-    moveDraft, t, useFactorySlot,
+    moveDraft, t, useFactorySlot, inputPlaceholder,
   } = props
   const session = useSession(snapshot => snapshot)
   const Views = useFactorySlot('views', ConversationSessionView)
@@ -103,17 +103,15 @@ export function ConversationContent(props: ConversationContentProps) {
   //   1. a just-picked workspace (pending) → its title;
   //   2. cold start, no session yet → placeholder ("Choose workspace");
   //   3. the blank session's workspace is in the list → its title;
-  //   4. list still loading → cwd folder name bridges so the title does not
-  //      flash on refresh (empty cwd → placeholder);
-  //   5. list ready but no owning workspace (deleted from the sidebar) →
-  //      placeholder, never the deleted folder's name via cwd.
+  //   4. no owning Workspace → the Session's retained cwd folder name;
+  //      an empty cwd leaves the placeholder.
   // A title still automatic reads in the reader's language, matching the
   // sidebar row the same Workspace has there.
   const storedChipTitle = pendingWorkspace?.title
     ?? (sessionId === undefined
       ? undefined
       : sessionWorkspace?.title
-        ?? (workspaces.phase === 'ready' || cwd === undefined || cwd === ''
+        ?? (cwd === undefined || cwd === ''
           ? undefined
           : workspaceLabel(cwd)))
   const chipTitle = storedChipTitle === undefined
@@ -149,7 +147,7 @@ export function ConversationContent(props: ConversationContentProps) {
 
   // The placeholder chip ("Choose workspace") and the Workspace-trigger input travel
   // together: no workspace picked yet (cold start, no session at all), or a
-  // blank session whose workspace vanished (deleted from the sidebar). The
+  // blank session without a retained cwd. The
   // bar is ONE session-maybe slot rendered unconditionally — inert is a prop,
   // not a different tree, so the textarea DOM survives the transition.
   const inert = sessionId === undefined || (hero && chipTitle === undefined)
@@ -172,7 +170,7 @@ export function ConversationContent(props: ConversationContentProps) {
         // block keeps the model seat live because choosing a model is how the
         // user clears it.
         ? { blocked: composerBlock, placeholder: composerBlock.reason }
-        : hero ? { placeholder: t('placeholder.hero') } : {}),
+        : hero ? { placeholder: inputPlaceholder?.() ?? t('placeholder.hero') } : {}),
   })
 
   const composerBar = (

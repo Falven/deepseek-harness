@@ -36,10 +36,12 @@ function fakeHttpServer(
   upgrades: WebUpgradeRoute[],
   host = '127.0.0.1',
   protocol: WebServer['protocol'] = 'http:',
-): Pick<WebServer, 'register' | 'registerUpgrade' | 'tapIndex' | 'port' | 'host' | 'protocol'> {
+  requiresExternalAdmission = false,
+): Pick<WebServer, 'register' | 'registerUpgrade' | 'tapIndex' | 'port' | 'host' | 'protocol' | 'requiresExternalAdmission'> {
   return {
     host,
     protocol,
+    requiresExternalAdmission,
     register(route: WebRoute) {
       if (routes.some(candidate => candidate.kind === route.kind && candidate.path === route.path)) {
         throw new Error(`duplicate route ${route.path}`)
@@ -147,7 +149,7 @@ async function mounted(
   const upgrades: WebUpgradeRoute[] = []
   if (credentials === undefined) provideBrowserCredentials(ctx)
   else ctx.provide('credentials', credentials)
-  ctx.provide('webServer', fakeHttpServer(ctx, routes, upgrades, '127.0.0.1', protocol) as WebServer)
+  ctx.provide('webServer', fakeHttpServer(ctx, routes, upgrades, '127.0.0.1', protocol, config?.authMode === 'external') as WebServer)
   const fiber = await mountConnection(ctx, config)
   await fiber.await()
   return {
@@ -177,6 +179,33 @@ async function browserCookie(ctx: Context, authority: string): Promise<string> {
 }
 
 describe('connection node half', () => {
+  it('uses the admitted external browser identity and keeps native API Peer credentials', async () => {
+    const host = await mounted({ authMode: 'external' })
+    try {
+      const route = host.routes.find(candidate => candidate.path === '/api')!
+      const browser = fakeResponse()
+      await route.handler(fakeRequest({ host: 'localhost' }), browser.response)
+      expect(browser.state.status).toBe(404)
+      expect(host.connection.admit(fakeRequest({ host: 'localhost' }))).toEqual({ rejection: 401 })
+
+      const untrusted = fakeResponse()
+      await route.handler(fakeRequest({ host: 'untrusted.example' }), untrusted.response)
+      expect(untrusted.state.status).toBe(403)
+
+      const connect = host.routes.find(candidate => candidate.path === '/connect')!
+      const invalid = fakeResponse()
+      await connect.handler(fakeRequest({ host: 'localhost' }, '/connect?token=invalid'), invalid.response)
+      expect(invalid.state.status).toBe(401)
+      const valid = fakeResponse()
+      const token = (await loginUrl(host.ctx, 'http://localhost')).search
+      await connect.handler(fakeRequest({ host: 'localhost' }, `/connect${token}`), valid.response)
+      expect(valid.state.status).toBe(302)
+      const cookie = valid.state.headers?.['set-cookie']?.split(';', 1)[0] ?? ''
+      const admission = host.connection.admit(fakeRequest({ host: 'localhost', cookie }))
+      expect(admission).toHaveProperty('peer.interactions', 'none')
+    } finally { await host.dispose() }
+  })
+
   it('reports provider failures on custom RPC routes without writing to a destroyed response', async () => {
     const { ctx, connection, routes, dispose } = await mounted()
     const handler = vi.fn(async () => ({ ok: true as const, value: null }))

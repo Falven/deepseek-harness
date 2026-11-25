@@ -361,6 +361,7 @@ export function apply(ctx: Context, config: SyncedConfig<ConversationConfig>): v
       widthControls: { scope: 'root' },
     },
     inject: (sessionId: SessionId | undefined): ConversationInjected => ({
+      inputPlaceholder: ctx.get('conversationPresentation')?.inputPlaceholder,
       hooks: {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
       },
@@ -470,6 +471,7 @@ export function apply(ctx: Context, config: SyncedConfig<ConversationConfig>): v
       if (sessionId === undefined) {
         return {
           registerFileIntake: fileIntake,
+          inputPlaceholder: ctx.get('conversationPresentation')?.inputPlaceholder,
           keyboard: undefined,
           addFiles: undefined,
           removeAttachment: undefined,
@@ -494,6 +496,7 @@ export function apply(ctx: Context, config: SyncedConfig<ConversationConfig>): v
       const bridge = hostPathBridge()
       return {
         registerFileIntake: fileIntake,
+        inputPlaceholder: ctx.get('conversationPresentation')?.inputPlaceholder,
         keyboard: shell,
         addFiles: (files, directories = new Set()) => {
           if (sessions.binding(sessionId) === undefined) return t('file.sessionUnavailable')

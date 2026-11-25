@@ -21,6 +21,15 @@ declare module '@deepseek-ai/cordis' {
     /** Host storage and staged-receipt service for browser file and image uploads. */
     fileUploads: FileUploads
   }
+  interface Events {
+    /**
+     * Scope one validated Session upload while its bytes enter the attachment store.
+     * @param payload - Agent receiving the staged upload.
+     * @param next - Store the validated upload in the receiving Agent's scope.
+     * @mode waterfall
+     */
+    'file-upload/store'(payload: { agent: Agent }, next: () => Promise<void>): Promise<void>
+  }
 }
 
 interface StagedFileUpload {
@@ -236,7 +245,12 @@ export class FileUploads extends TypertRemoteService {
   private async store<T>(agent: Agent, save: () => Promise<T>): Promise<T> {
     this.assertOrdinaryAgent(agent)
     try {
-      return await save()
+      let stored: { value: T } | undefined
+      await this.ctx.waterfall('file-upload/store', { agent }, async () => {
+        stored = { value: await save() }
+      })
+      if (stored === undefined) throw new Error('file-upload/store did not store the upload')
+      return stored.value
     } catch (error) {
       if (remoteErrorOf(error) !== undefined) throw error
       if (this.ctx.attachments.isAttachmentError(error)) {

@@ -145,14 +145,22 @@ export interface WebResourceRoute {
 /** The unmatched-request responder; omitted auth requires authentication. */
 export type WebFallback = Pick<WebRoute, 'handler' | 'auth'> | Pick<WebResourceRoute, 'resource' | 'auth'>
 
-/** One exact-path HTTP upgrade registration. */
+/** One HTTP upgrade registration. */
 export interface WebUpgradeRoute {
+  /** Default exact; prefix matches this pathname and children. */
+  kind?: WebRouteKind
   /** Absolute pathname, no trailing slash. */
   path: string
   /** Owns protocol negotiation and the upgraded socket after dispatch. */
   handler: (req: IncomingMessage, socket: Duplex, head: Buffer, peer?: PeerScope) => void | Promise<void>
   /** Defaults to required. Anonymous handlers may receive no Peer. */
   auth?: WebAuthenticationRule
+}
+
+/** Application admission before any named route or SPA fallback. */
+export interface WebAdmissionProvider {
+  http: (req: IncomingMessage, res: ServerResponse, next: () => Promise<void>) => Promise<void>
+  upgrade: (req: IncomingMessage, socket: Duplex, next: () => Promise<void>) => Promise<void>
 }
 
 /**
@@ -196,6 +204,8 @@ export interface Config {
   compressionLevel?: number
   /** Minimum known response length eligible for gzip; unknown-length streams are eligible. @default 1024 */
   compressionThresholdBytes?: number
+  /** Reject all traffic until an application admission provider is registered. @default false */
+  externalAdmission?: boolean
 }
 
 const DEFAULT_COMPRESSION = 'none' as const
@@ -448,11 +458,13 @@ export class WebServer extends Service {
     compression: z.union([z.const('none'), z.const('gzip')]).default(DEFAULT_COMPRESSION),
     compressionLevel: z.number().step(1).min(0).max(9).default(DEFAULT_COMPRESSION_LEVEL),
     compressionThresholdBytes: z.natural().default(DEFAULT_COMPRESSION_THRESHOLD_BYTES),
+    externalAdmission: z.boolean().default(false),
   })
 
   private readonly exact = new Map<string, WebRoute | WebResourceRoute>()
   private readonly prefixes = new Map<string, WebRoute | WebResourceRoute>()
   private readonly upgrades = new Map<string, WebUpgradeRoute>()
+  private readonly upgradePrefixes = new Map<string, WebUpgradeRoute>()
   private readonly upgradedSockets = new Set<Duplex>()
   /**
    * Raw connections of a TLS listener, held until they close. A TLS connection
@@ -464,6 +476,7 @@ export class WebServer extends Service {
   private readonly tlsConnections = new Set<Duplex>()
   private readonly indexTaps: ((html: string) => string)[] = []
   private fallback: WebFallback | undefined
+  private admission: WebAdmissionProvider | undefined
   private server!: Server
   private listenedPort: number | undefined
   private readonly gzip: NodeMiddleware | undefined
@@ -527,17 +540,34 @@ export class WebServer extends Service {
   }
 
   /**
-   * Register an exact-path HTTP upgrade route. Duplicate paths throw because
+   * Register an HTTP upgrade route. Duplicate paths of the same kind throw because
    * one socket can have only one protocol owner.
    * @param route - pathname and handler owning negotiation plus socket use.
    * @returns the disposer removing the route.
    */
   registerUpgrade(route: WebUpgradeRoute): () => void {
-    if (this.upgrades.has(route.path)) {
+    const table = route.kind === 'prefix' ? this.upgradePrefixes : this.upgrades
+    if (table.has(route.path)) {
       throw new Error(`webserver: duplicate upgrade route "${route.path}"`)
     }
-    this.upgrades.set(route.path, route)
-    return () => { this.upgrades.delete(route.path) }
+    table.set(route.path, route)
+    return () => { table.delete(route.path) }
+  }
+
+  /**
+   * Register one process-owned gate, retained independently of route ownership.
+   * @param admission - provider that authenticates incoming requests.
+   * @returns a disposer removing the provider.
+   */
+  registerAdmission(admission: WebAdmissionProvider): () => void {
+    if (this.admission !== undefined) throw new Error('webserver: admission already registered')
+    this.admission = admission
+    return () => { if (this.admission === admission) this.admission = undefined }
+  }
+
+  /** Whether the deployment requires an external admission provider. */
+  get requiresExternalAdmission(): boolean {
+    return this.config.externalAdmission === true
   }
 
   /**
@@ -650,20 +680,30 @@ export class WebServer extends Service {
     // client dropping mid-body). Per-request failures log and answer 400 —
     // never a process exit.
     const listener = (req: IncomingMessage, res: ServerResponse): void => {
-      const next = (): void => {
-        const dispatch = async (): Promise<void> => { await this.ctx.waterfall(this, 'webserver/request', req, res, () => handle(req, res)) }
-        void dispatch().catch((err: unknown) => {
-          this.ctx.logger.warn(err instanceof Error ? err : new Error(String(err)))
-          if (res.headersSent) {
-            res.destroy()
-            return
-          }
-          res.writeHead(400)
-          res.end()
+      const dispatch = async (): Promise<void> => {
+        try {
+          await this.ctx.waterfall(this, 'webserver/request', req, res, () => handle(req, res))
+        } catch (error) {
+          this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+          if (res.headersSent) res.destroy()
+          else res.writeHead(400).end()
+        }
+      }
+      const admitted = (): void => {
+        if (!this.requiresExternalAdmission) { void dispatch(); return }
+        const admission = this.admission
+        if (admission === undefined) {
+          res.writeHead(503, { 'Cache-Control': 'no-store' }).end()
+          return
+        }
+        void Promise.resolve().then(() => admission.http(req, res, dispatch)).catch((error: unknown) => {
+          this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+          if (res.headersSent) res.destroy()
+          else res.writeHead(500).end()
         })
       }
-      if (this.gzip === undefined) next()
-      else this.gzip(req, res, next)
+      if (this.gzip === undefined) admitted()
+      else this.gzip(req, res, admitted)
     }
     const tls = this.tlsConfig
     // Disposal waits for in-flight acquisition and closes any listener it produces.
@@ -688,34 +728,24 @@ export class WebServer extends Service {
         })
       }
       this.server.on('upgrade', (req, socket, head) => {
+        const abort = new AbortController()
         const onError = (error: Error): void => {
           this.ctx.logger.warn(error)
           socket.destroy()
         }
+        this.upgradedSockets.add(socket)
         socket.on('error', onError)
         socket.once('close', () => {
+          abort.abort()
           socket.off('error', onError)
           this.upgradedSockets.delete(socket)
         })
-        let route: WebUpgradeRoute | undefined
-        let target: URL
-        try {
+        const dispatch = async (): Promise<void> => {
+          if (abort.signal.aborted || socket.destroyed) return
           /* v8 ignore next -- node:http always sets url on server requests. */
-          target = new URL(req.url ?? '/', 'http://x')
-          route = this.upgrades.get(target.pathname)
-        } catch (error) {
-          this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
-          socket.destroy()
-          return
-        }
-        if (route === undefined) {
-          socket.destroy()
-          return
-        }
-        this.upgradedSockets.add(socket)
-        const abort = new AbortController()
-        socket.once('close', () => { abort.abort() })
-        try {
+          const target = new URL(req.url ?? '/', 'http://x')
+          const route = this.matchUpgrade(target.pathname)
+          if (route === undefined) { socket.destroy(); return }
           const admission = this.authorize({
             headers: req.headers, method: req.method, url: target, transport: 'upgrade',
             signal: abort.signal, socket,
@@ -724,22 +754,24 @@ export class WebServer extends Service {
           if (admission.kind === 'deny') {
             const reason = { 401: 'Unauthorized', 403: 'Forbidden', 503: 'Service Unavailable' }[admission.status]
             const body = reason.toLowerCase()
-            socket.end(`HTTP/1.1 ${String(admission.status)} ${reason}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${String(Buffer.byteLength(body))}\r\n\r\n${body}`)
+            socket.end(
+              `HTTP/1.1 ${String(admission.status)} ${reason}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${String(Buffer.byteLength(body))}\r\n\r\n${body}`,
+            )
             return
           }
-          const dispatch = async (): Promise<void> => {
-            await this.ctx.waterfall(this, 'webserver/upgrade', req, socket, head, admission.peer, async () => {
-              if (!socket.destroyed) await route.handler(req, socket, head, admission.peer)
-            })
-          }
-          void dispatch().catch((error: unknown) => {
-            this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
-            socket.destroy()
+          await this.ctx.waterfall(this, 'webserver/upgrade', req, socket, head, admission.peer, async () => {
+            if (!socket.destroyed) await route.handler(req, socket, head, admission.peer)
           })
-        } catch (error) {
+        }
+        void Promise.resolve().then(() => {
+          if (!this.requiresExternalAdmission) return dispatch()
+          const admission = this.admission
+          if (admission === undefined) { socket.destroy(); return }
+          return admission.upgrade(req, socket, dispatch)
+        }).catch((error: unknown) => {
           this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
           socket.destroy()
-        }
+        })
       })
 
       await new Promise<void>((resolve, reject) => {
@@ -791,6 +823,17 @@ export class WebServer extends Service {
       if (admission.peer?.signal.aborted) return { kind: 'deny', status: 401 }
     }
     return admission
+  }
+
+  private matchUpgrade(pathname: string): WebUpgradeRoute | undefined {
+    const exact = this.upgrades.get(pathname)
+    if (exact !== undefined) return exact
+    let best: WebUpgradeRoute | undefined
+    for (const [prefix, route] of this.upgradePrefixes) {
+      if (pathname !== prefix && !pathname.startsWith(`${prefix}/`)) continue
+      if (best === undefined || prefix.length > best.path.length) best = route
+    }
+    return best
   }
 
   /** Longest-prefix-wins over the prefix table after an exact-table miss. */

@@ -42,6 +42,8 @@ Connection 可用时，Host 入口会在 Connection 共享的 `/api` FetchHandle
 
 启动器提供 `ctx.appReady` 时，Gateway 仅在应用成功启动后注册 WebSocket 升级路由。此前的连接尝试仍属于载体故障，由 Connection 的重试策略处理，因此重启中的 Host 不会在控制器仍在初始化时接受流。卸载会取消尚未触发的就绪订阅，并关闭已注册的载体。不提供 `appReady` 的嵌入式 Host 会立即注册，并自行负责启动顺序；进程内调用不变。
 
+`typert-gateway/stream-request` waterfall 对每条 WebSocket 逻辑流运行，并携带最初的 upgrade 请求；它包围异步打开、上行与下行工作。应用可在此 scope 内恢复已接纳的请求身份；socket 的 Peer 仍负责连接生命周期与释放。拒绝或未委托的返回只使该逻辑流收到错误帧，socket 仍可使用。
+
 每条流还在同一条逻辑流上携带从 Client 到 Host 的上行。方法把上行项类型声明为返回类型的第二个类型参数——来自 [`dsh-typert-protocol`](../../typert/protocol/README.zh.md) 的 `RemoteStream<Out, In>`；`In` 缺省为 `never`，返回 `Iterable`、`AsyncIterable` 或 `RemoteStream<Out>` 的方法即声明自己不读上行。运行中的方法通过 `this.ctx.invocation` 读取本次调用：Gateway 从携带该 `RemoteInvocation`（`request`、`service`、`peer`、`signal` 与 `uplink()`）的 Context 派生接收者，因此没有任何东西进入参数列表，而非 Remote 调用派生的 Context 上 `ctx.invocation` 为 `undefined`。`uplink()` 每次调用只能取一次。描述符带 codec 时它在交付前逐项解码；不带时——SRC 方法，或 `In` 为 `never` 的方法——它交付经 JSON 安全校验的 `unknown` 值。Client 在已打开的逻辑流上把每一项作为 `item` 帧发送（顶层 `undefined` 项是不带 `value` 的 `item` 帧），以 `end` 帧表示半关闭；方法通过 `uplink()` 迭代结束感知半关闭，通过 `signal` 感知取消。被拒绝的项使整条流以 `gateway/input-invalid`（字段 `uplink`）失败。上行项在 Host 逐项校验，因为它们来自浏览器；下行项是 Host 方法产出的值，不经校验原样透传。方法结束下行时 Gateway 调用 uplink 迭代器的 return 并丢弃未读的项；发给从未取用 uplink 的方法的项在 inbox 里等到那时为止。每条逻辑流最多缓冲 `streamInboxBytes`（默认 262144）字节的上行帧；超限使流以 `gateway/uplink-overflow` 失败，`end` 之后的项使流以 `gateway/protocol` 失败，两种情况都不关闭 socket。发给 Host 已结束的流 id 的 `item`、`end` 与 `cancel` 帧被丢弃；只有重复的 `open` 会关闭 socket。`$events` 这类 Gateway 自有的流在打开时立即 return 其 uplink，因此它们的 `item` 帧被丢弃而不缓冲。一元方法也可以调用 `uplink()`；其项只在方法运行期间可读。每条流都代表一个显式指明的 Peer：WebSocket 上的流代表 Connection 在升级时接纳的 Peer，该 scope 释放时 socket 关闭；进程内载体的流代表其调用方传入的 Peer。该 Peer 释放时，流方法的 `signal` 也随之中止，流以 `gateway/cancelled` 结束，`$events` 流也随其 Peer 结束；已在运行的一元调用不会被取消。
 
 Host 下行、Host 上行和 Client 上行泵的取消与停止状态归属单次读取，不保留已交付项的历史。下行结束也会唤醒尚未完成的上行读取。
@@ -49,6 +51,8 @@ Host 下行、Host 上行和 Client 上行泵的取消与停止状态归属单�
 Host 组合可通过 `registerRemoteEvents()` 注册唯一的应用事件 source。Gateway 为它保留内部 `$events` logical endpoint，只接受空 `args`，并在 source 撤回时中止该注册打开的流。事件名单、参数校验、每个 Client 的队列及 opening `{ type: 'ready', clientId, host: { home } }` frame 中的 Host home 由 API Remotes 拥有。source factory 在返回 iterable 前同步挂好增量 listener，因此 Client 只在增量投递就绪后发布 generation 并开始 baseline 读取。Peer 的 principal 不是 owner 的 `$events` 流从不收到它可以作答的 scoped waterfall（瀑布式事件）；只有当 `ctx.remoteAccess.decide({ principal, action: 'event:<name>', resources })` 在该帧读取函数指明的资源上（帧没有读取函数时为 `global`）允许时，才整条、不裁剪地收到广播 emit 帧；每帧只解析一次资源，资源非法的帧不经判定即不送达任何非 owner 流，被拒的帧只对该流丢弃。这类 Peer 的 `$events/result` 回复以 `gateway/invocation-unavailable` 失败。
 
 已释放的 Peer 在事件流参与检查之前被拒绝。无论 principal 是否为 owner，`$events` 与 `$events/result` 都要求 `peer.interactions === 'answer'`；否则返回 `gateway/interactions-forbidden`。只有 owner Peer 接收并回答转发的 waterfall，回复必须来自持有该事件流的同一 Peer。`hasLiveClient()` 只计算未取消的 owner 回答流；非 owner 广播流、单独的 WebSocket 与已取消但尚未完成 iterator 清理的流均不计入。这一同步观察不保证后续投递成功或 Client Provider 已就绪。
+
+获胜的 Client 结果恢复 Host waterfall 之前，Gateway 会等待 `typert-gateway/remote-event-result`，其中包含原始请求、存活 Context、事件 id 和返回值。监听器拒绝会拒绝 Host waterfall；准入期间发生取消时，迟到结果不会生效。显式调用 `next()` 委托或迟到回复均不发出此事件。
 
 <a id="client-service-clientremote-ctx-key-remote"></a>
 ## Client 服务：`ClientRemote`（ctx key：`remote`）

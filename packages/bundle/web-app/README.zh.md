@@ -60,6 +60,7 @@ dsh --profile web --no-open --port 8080
 | `openBrowser` | `true` | 启动后打开首个允许自动打开的入口，SSH 下除外 |
 | `surfaceContext` | `true` | 把 `DSH_WEB_URL` 暴露给 agent 的 shell 命令 |
 | `publicUrl` | 未设置 | 对外公告的 HTTP(S) 应用根；否则公告绑定地址 URL |
+| `indexPaths` | `[]` | 额外作为原生 index 提供的精确 SPA 路径，资源路径相对根目录 |
 
 WebApp 拥有 `printUrl` 与 `openBrowser`。本组合启用 URL 打印，并把解析后的 `--no-open` 设置传给 runtime。就绪后，同步 `webserver/entry-url` 监听器贡献完整入口。启用打印时，WebApp 按 `label: url` 逐行打印；启用浏览器打开且不在 SSH 下时，仅打开首个 `open: true` 的入口。没有入口则不输出、不打开。
 

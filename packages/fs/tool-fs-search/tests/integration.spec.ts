@@ -23,6 +23,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
 
@@ -72,6 +73,7 @@ describe('search tools over the real subprocess service + the packaged rg', () =
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(LocalSubprocessRuntime)
     await ctx.plugin(ToolFsSearch, { sampleOverCapGlobResults: true })
   })

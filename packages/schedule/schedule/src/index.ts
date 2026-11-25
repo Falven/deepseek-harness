@@ -23,7 +23,7 @@ import type {
   ScheduleId, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteInactiveResult, ScheduleDeliveryHistoryRequest,
   ScheduleDeliveryHistoryResult, ScheduleEditRequest, ScheduleEditResult, ScheduleListRequest,
   ScheduleListResult, SchedulePatch, ScheduleRecord, ScheduleRunRequest, ScheduleRunResult, ScheduleSessionCreateSpec,
-  ScheduleTarget, ScheduleTargetRequest, ScheduleViewRequest, ScheduleViewResult,
+  ScheduleTarget, ScheduleTargetRequest, ScheduleTaskSource, ScheduleViewRequest, ScheduleViewResult,
 } from './types.ts'
 export type * from './client.ts'
 export { scheduleDomain } from './storage.ts'
@@ -222,7 +222,7 @@ function revisedTask(
  * listener that acknowledges durable inbox delivery through `ctx.sessions.flush()`.
  */
 export class ScheduleService extends TypertRemoteService {
-  static inject = ['agents', 'sessions', 'storageDomain', 'sessionPersistence']
+  static inject = ['agents', 'sessions', 'storageDomain', 'sessionPersistence', 'sessionProjections']
 
   static Config: z<Config> = z.object({
     deliveryHistoryDays: z.number().step(1).min(1).max(3650).default(DEFAULT_DELIVERY_HISTORY_DAYS),
@@ -238,6 +238,7 @@ export class ScheduleService extends TypertRemoteService {
   private chain: Promise<unknown> = Promise.resolve()
   private notifications: Promise<void> = Promise.resolve()
   private runtime: ScheduleRuntime | undefined
+  private readyForDispatch = false
   private resolveWebAgent: ((sessionId: SessionId) => Promise<Agent>) | undefined
   private stopping = false
 
@@ -255,7 +256,7 @@ export class ScheduleService extends TypertRemoteService {
           return resolved.agent
         }
         // Resume overdue tasks when the Web activation provider becomes ready.
-        this.runtime?.requestDrive()
+        this.requestDrive()
         return () => { this.resolveWebAgent = undefined }
       })
     })
@@ -314,8 +315,17 @@ export class ScheduleService extends TypertRemoteService {
           if (this.resolveWebAgent === undefined) throw new Error('schedule: no Session activation provider')
           return this.resolveWebAgent(sessionId)
         })
-      this.runtime.requestDrive()
+      const activate = (): void => {
+        this.readyForDispatch = true
+        this.requestDrive()
+      }
+      const appReady = ctx.get('appReady')
+      if (appReady === undefined) activate()
+      else ctx.effect(() => appReady.onReady(activate))
       return cleanup
+    })
+    ctx.on('session/event', (_session, event) => {
+      if (event.type === 'turn/end' && event.data.reason.kind === 'completed') this.requestDrive()
     })
     // Host tasks outlive their Session's Agent, so archive admission reads the
     // stored rows rather than a live runtime: an idle Session that an active task
@@ -393,15 +403,18 @@ export class ScheduleService extends TypertRemoteService {
       signal?.throwIfAborted()
       await this.validateTarget(target, signal)
       signal?.throwIfAborted()
+      const delivery = await this.taskSource(target, actorSessionId, 'create')
+      signal?.throwIfAborted()
       const createdAt = new Date(now).toISOString()
       const task = scheduleTaskSchema.parse({
         record, target, involvedSessionIds: involved(actorSessionId, target, []), status: 'active',
         createdAt, updatedAt: createdAt,
+        ...delivery,
         deliveryHistory: { records: [], earlierRecordsUnavailable: false, earlierRecordsPruned: false },
       })
       await domain.table('tasks').put(id, task)
       this.emitChanged()
-      this.runtime?.requestDrive()
+      this.requestDrive()
       this.queueNotification(task, actorSessionId, 'created')
       return this.entry(task)
     })
@@ -575,7 +588,7 @@ export class ScheduleService extends TypertRemoteService {
       if (request.action === 'delete') {
         await tasks.delete(request.id)
         this.emitChanged()
-        this.runtime?.requestDrive()
+        this.requestDrive()
         this.queueNotification(current, actorSessionId, 'deleted')
         return { id: request.id, deleted: true }
       }
@@ -584,13 +597,59 @@ export class ScheduleService extends TypertRemoteService {
         await this.validateTarget(effectiveTarget, signal)
         signal?.throwIfAborted()
       }
-      const task = revisedTask(current, request.patch, target, actorSessionId, Date.now())
+      const revised = revisedTask(current, request.patch, target, actorSessionId, Date.now())
+      const existing: ScheduleTaskSource = {
+        ...(current.deliverySource === undefined ? {} : { source: current.deliverySource }),
+        ...(current.deliverySourceKey === undefined ? {} : { key: current.deliverySourceKey }),
+      }
+      const delivery = await this.taskSource(effectiveTarget, actorSessionId, 'update', existing)
+      signal?.throwIfAborted()
+      const { deliverySource: _source, deliverySourceKey: _key, ...retained } = revised
+      const task = scheduleTaskSchema.parse({ ...retained, ...delivery })
       await tasks.put(request.id, task)
       this.emitChanged()
-      this.runtime?.requestDrive()
+      this.requestDrive()
       this.queueNotification(task, actorSessionId, 'updated')
       return this.entry(task)
     })
+  }
+
+  /**
+   * Pause the active reminders targeting a Session before its Sandbox retires.
+   * @param sessionId - Session whose reminders must wait for an explicit edit.
+   * @returns once every selected task is durably paused.
+   */
+  async pauseSession(sessionId: SessionId): Promise<void> {
+    await this.serialize(async () => {
+      const tasks = (await this.getDomain()).table('tasks')
+      for (const [id, task] of tasks.entries()) {
+        const target = task.target.kind === 'new' ? task.pendingDelivery?.targetSessionId : task.target.sessionId
+        if (target !== sessionId || task.status !== 'active') continue
+        await tasks.put(id, { ...task, status: 'paused', updatedAt: revisedAt(task, Date.now()) })
+        this.emitChanged()
+      }
+      this.requestDrive()
+    })
+  }
+
+  /** Timed work starts only after the composed application's readiness boundary. */
+  private requestDrive(): void {
+    if (this.readyForDispatch) this.runtime?.requestDrive()
+  }
+
+  /** Resolve and detach the source before committing the task update. */
+  private async taskSource(
+    target: ScheduleTarget, actorSessionId: SessionId | undefined, operation: 'create' | 'update',
+    existing: ScheduleTaskSource = {},
+  ): Promise<Pick<ScheduleTask, 'deliverySource' | 'deliverySourceKey'>> {
+    const sessionId = target.kind === 'new' ? actorSessionId : target.sessionId
+    const delivery = await this.ctx.waterfall('schedule/task-source', {
+      operation, ...(sessionId === undefined ? {} : { sessionId }),
+    }, () => Promise.resolve(existing))
+    return {
+      ...(delivery.source === undefined ? {} : { deliverySource: structuredClone(delivery.source) }),
+      ...(delivery.key === undefined ? {} : { deliverySourceKey: delivery.key }),
+    }
   }
 
   /**
@@ -789,7 +848,7 @@ export class ScheduleService extends TypertRemoteService {
     }
     // Rows enumerated in this slot are present, so a non-empty batch always removed rows.
     this.emitChanged()
-    if (rearm) this.runtime?.requestDrive()
+    if (rearm) this.requestDrive()
     return removed
   }
 

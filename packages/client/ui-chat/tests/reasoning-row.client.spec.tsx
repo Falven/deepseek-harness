@@ -4,6 +4,7 @@ import { renderReasoningSlot as renderSlot, unusedImageLoader } from './reasonin
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { zh } from '../src/client/locale.ts'
 import { AssistantMarkdown, type AssistantMarkdownProps } from '../src/client/chat/AssistantMarkdown.tsx'
@@ -19,10 +20,11 @@ afterEach(() => {
 })
 
 const t = makeTranslate(zh, commonZh)
+const SID = SessionId('reasoning-row')
 
 describe('AssistantMarkdown reasoning blocks', () => {
   const props = {
-    renderSlot, useDisclosure, useGroupAction: useSearchableHidden,
+    sessionId: SID, renderSlot, useDisclosure, useGroupAction: useSearchableHidden,
     usePresentation: useDetailedPresentation, loadImage: unusedImageLoader, t,
   }
 
@@ -221,20 +223,20 @@ describe('ReasoningRow', () => {
   ])('starts collapsed and preserves manual expansion when $kind arrives', (nextBlock) => {
     const reasoning = { kind: 'reasoning' as const, text: 'Inspect the session\nCheck persistence' }
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t} blocks={[reasoning]} streaming loadImage={unusedImageLoader} />,
     )
     expect(view.getByRole('button').getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(view.getByText('思考'))
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t} blocks={[reasoning, nextBlock]} streaming loadImage={unusedImageLoader} />,
     )
     expect(view.getByRole('button').getAttribute('aria-expanded')).toBe('true')
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t} blocks={[reasoning, nextBlock]} streaming={false} loadImage={unusedImageLoader} />,
     )
@@ -246,7 +248,7 @@ describe('ReasoningRow', () => {
 
   it('advances on completed paragraph first lines, then restores the settled first line', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: 'Inspect the session\nDetails\n\nNewest reasoning tokens\n' }]}
@@ -260,7 +262,7 @@ describe('ReasoningRow', () => {
       .toBe('true')
 
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: 'Inspect the session\nDetails\n\nNewest reasoning tokens\nMore details\n\nChecking boundaries' }]}
@@ -274,7 +276,7 @@ describe('ReasoningRow', () => {
 
     const text = 'Inspect the session\nDetails\n\nNewest reasoning tokens\nMore details\n\nChecking boundaries\n'
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text }]}
@@ -286,7 +288,7 @@ describe('ReasoningRow', () => {
     expect(view.queryByText('Newest reasoning tokens')).toBeNull()
 
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text }]}
@@ -302,7 +304,7 @@ describe('ReasoningRow', () => {
 
   it('expands from either Think or the reasoning summary', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: 'Inspect the session\nCheck persistence' }]}
@@ -333,7 +335,7 @@ describe('ReasoningRow', () => {
     },
   ])('strips double-asterisk markers from the $label summary and renders body emphasis', ({ text, streaming }) => {
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text }]}
@@ -354,7 +356,7 @@ describe('ReasoningRow', () => {
     const text = Array.from({ length: 6 }, (_, index) => `${'#'.repeat(index + 1)} Section ${index + 1}`)
       .join('\n\n') + '\n\nReasoning body.'
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text }]}
@@ -380,7 +382,7 @@ describe('ReasoningRow', () => {
   it('keeps completed reasoning blocks mounted while the open streaming tail grows', () => {
     const first = '## Investigation\n\n**Check persistence**\n\n'
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: first }]}
@@ -393,7 +395,7 @@ describe('ReasoningRow', () => {
     const emphasis = view.getByText('Check persistence')
     const text = first + Array.from({ length: 8 }, (_, index) => `Paragraph ${index}.`).join('\n\n')
     view.rerender(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text }]}
@@ -408,7 +410,7 @@ describe('ReasoningRow', () => {
 
   it('expanded Think drops the inline summary and renders prose without an IN card', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: 'Inspect the session\nCheck persistence' }]}
@@ -425,7 +427,7 @@ describe('ReasoningRow', () => {
 
   it('anchors the sticky-header selector: only an open Think row nests the disclosure row under data-expanded and data-open', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={renderSlot} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[

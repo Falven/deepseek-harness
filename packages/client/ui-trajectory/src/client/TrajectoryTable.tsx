@@ -680,7 +680,7 @@ function assistantToolCalls(
   const calls: TableRecord[] = []
   for (let i = at + 1; i < records.length; i++) {
     const record = records[i]
-    if (record === undefined) break
+    if (record === undefined || record.section !== records[at].section) break
     if (record.cell.kind !== 'tool' && record.cell.kind !== 'subtool') break
     calls.push(record)
   }
@@ -721,6 +721,7 @@ function collapseCallRecords(
       const candidate = records[j]
       if (
         candidate === undefined
+        || candidate.section !== record.section
         || candidate.collapsedSummary !== undefined
         || (candidate.cell.kind !== 'tool' && candidate.cell.kind !== 'subtool')
         || (kind === 'tool' && candidate.cell.kind !== 'subtool')

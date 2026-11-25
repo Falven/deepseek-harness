@@ -90,6 +90,10 @@ interface JobSpec {
   kind: JobKind
   /** One-line model-facing label (the command; the delegation description). */
   label: string
+  /** Tool invocation that started the job, when supplied by its producer. */
+  callId?: string
+  /** Initial command working directory, when supplied by its producer. */
+  cwd?: string
   /**
    * Owning session. Access is fenced by it, and the owner's live Agent must be
    * the one currently registered under that id: its disposal cancels and
@@ -291,6 +295,10 @@ interface JobView {
   readonly kind: string
   /** The producer-supplied one-line label. */
   readonly label: string
+  /** Tool invocation that started the job, when supplied by its producer. */
+  readonly callId?: string
+  /** Initial command working directory, when supplied by its producer. */
+  readonly cwd?: string
   /** Owning session; absent for an unowned job, which every caller can see. */
   readonly owner?: SessionId
   /** Producer-owned cap for complete model-facing notices and reads, in UTF-8 bytes. */
@@ -562,4 +570,28 @@ abstract attachController(name: string): () => void
 Types: [SessionId](core.md)
 
 Source: [`packages/jobs/jobs/src/index.ts`](../../packages/jobs/jobs/src/index.ts)
+
+<a id="tool-jobs-events"></a>
+
+### `tool-jobs/*` events
+
+<a id="tool-jobscompletion-message--waterfall"></a>
+
+#### `tool-jobs/completion-message` — waterfall
+
+Intercept a settled job's exact notice before its owner receives it. Call `next()` synchronously to continue ordinary follow-up or injection.
+
+```ts cordis-catalog
+/**
+ * Intercept a settled job's exact notice before its owner receives it.
+ * Call `next()` synchronously to continue ordinary follow-up or injection.
+ * @param input - the destination, settled job, and notice message.
+ * @mode waterfall
+ */
+'tool-jobs/completion-message'( input: { owner: Agent; job: JobView; message: UserMessage }, next: () => void, ): void
+```
+
+Types: [Agent](core.md) · [UserMessage](session.md)
+
+Source: [`packages/jobs/tool-jobs/src/index.ts`](../../packages/jobs/tool-jobs/src/index.ts)
 <!-- END GENERATED cordis-surface -->

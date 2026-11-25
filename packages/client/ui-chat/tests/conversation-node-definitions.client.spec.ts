@@ -3228,6 +3228,31 @@ it('retains a sign-out cancellation notice when reopening a partial turn', () =>
   })
 })
 
+it('keeps accepted Host Tool activity at its Session position through settlement and replay', () => {
+  const call = {
+    turn: null, callId: 'app-action', name: 'mcp__catalog__action', arguments: { value: 'exact' },
+    source: { name: 'App', actor: { id: 'alice', name: 'Alice' } },
+  }
+  const accepted = [at(0, 'turn/start', { turn: 1 }), at(1, 'step/start', { turn: 1, step: 1 }), at(2, 'tool/host-call', call)]
+  const live = assembler(accepted)
+  const running = node(snapshot(live), 'tool-call')
+  expect(running).toMatchObject({ anchorSeq: 2, location: { kind: 'session' }, data: { root: {
+    phase: 'start', turn: null, step: null, source: call.source, argsRaw: '{"value":"exact"}',
+  } } })
+  const result = at(4, 'tool/host-result', {
+    ...call, status: 'completed', isError: false, content: [], value: {}, startedAt: 1_700_000_000_002,
+  })
+  const settled = [...accepted, at(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }), result]
+  live.replaceWindow(settled, false)
+  live.flush()
+  const completed = node(snapshot(live), 'tool-call')
+  expect(completed).toMatchObject({ key: running?.key, anchorSeq: 2, location: { kind: 'session' }, data: { root: {
+    kind: 'tool-result', source: call.source, call: { name: call.name, argsRaw: '{"value":"exact"}' },
+  } } })
+  expect(node(snapshot(assembler(settled)), 'tool-call')).toEqual(completed)
+  expect(node(snapshot(assembler([result], true)), 'tool-call')).toMatchObject({ data: { root: { callId: call.callId } } })
+})
+
 it('reports a turn closed after its process exited as a stopped turn', () => {
   const value = assembler([
     at(7, 'turn/end', { turn: 1, reason: { kind: 'interrupted' } }),

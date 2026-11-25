@@ -59,7 +59,7 @@ describe('SessionSkillCatalog', () => {
     ctx.provide('sessionQuery', { observeSession } as never)
     const resume = vi.spyOn(ctx.agents, 'resume')
     const ensureDirectory = vi.spyOn(ctx.workingDirectory, 'ensure')
-    const list = vi.fn(() => Promise.resolve([
+    const snapshot = vi.fn(async () => ({ complete: true, skills: [
       {
         name: 'review',
         description: 'Review the current change.',
@@ -72,8 +72,8 @@ describe('SessionSkillCatalog', () => {
         description: 'Not shown to the user.',
         invocation: { modelInvocable: true, userInvocable: false },
       },
-    ]))
-    ctx.provide('skills', { list } as never)
+    ] }))
+    ctx.provide('skills', { snapshot } as never)
     const catalog = new SessionSkillCatalog(ctx)
 
     await expect(catalog.list({ sessionId }, new AbortController().signal)).resolves.toEqual({
@@ -90,7 +90,7 @@ describe('SessionSkillCatalog', () => {
     expect(resume).not.toHaveBeenCalled()
     expect(ensureDirectory).not.toHaveBeenCalled()
     expect(ctx.agents.list()).toEqual([])
-    expect(list).toHaveBeenCalledWith({ cwd: '/cold/project', scope: undefined })
+    expect(snapshot).toHaveBeenCalledWith({ cwd: '/cold/project', scope: undefined, signal: expect.any(AbortSignal) })
   })
 
   it.each([
@@ -108,13 +108,13 @@ describe('SessionSkillCatalog', () => {
           ...workingDirectory === undefined ? {} : { workingDirectory },
         })),
       } as never)
-      const list = vi.fn(() => Promise.resolve([]))
-      ctx.provide('skills', { list } as never)
+      const snapshot = vi.fn(async () => ({ complete: true, skills: [] }))
+      ctx.provide('skills', { snapshot } as never)
       const ensure = vi.spyOn(ctx.workingDirectory, 'ensure')
       const resume = vi.spyOn(ctx.agents, 'resume')
       await expect(new SessionSkillCatalog(ctx).list({ sessionId }, new AbortController().signal))
         .resolves.toEqual({ skills: [] })
-      expect(list).toHaveBeenCalledWith({ cwd: expected, scope: undefined })
+      expect(snapshot).toHaveBeenCalledWith({ cwd: expected, scope: undefined, signal: expect.any(AbortSignal) })
       expect(ensure).not.toHaveBeenCalled()
       expect(resume).not.toHaveBeenCalled()
     } finally {
@@ -132,14 +132,14 @@ describe('SessionSkillCatalog', () => {
     ctx.provide('sessionQuery', {
       observeSession: () => Promise.resolve(observation(sessionId, { cwd: '/live/project' })),
     } as never)
-    const scopedList = vi.fn(() => Promise.resolve([{
+    const scopedSnapshot = vi.fn(async () => ({ complete: true, skills: [{
       name: 'preset-owned',
       description: 'Composed for this Agent.',
       invocation: { modelInvocable: false, userInvocable: true },
-    }]))
+    }] }))
     const acquireScope = vi.fn()
     ctx.provide('agentPresets', {
-      serviceFor: () => ({ list: scopedList }),
+      serviceFor: () => ({ snapshot: scopedSnapshot }),
       acquireScope,
     } as never)
     const catalog = new SessionSkillCatalog(ctx)
@@ -151,7 +151,7 @@ describe('SessionSkillCatalog', () => {
         modelInvocable: false,
       }],
     })
-    expect(scopedList).toHaveBeenCalledWith({ cwd: '/live/current', scope: agent })
+    expect(scopedSnapshot).toHaveBeenCalledWith({ cwd: '/live/current', scope: agent, signal: expect.any(AbortSignal) })
     expect(ensureDirectory).toHaveBeenCalledWith(agent, expect.any(AbortSignal))
     expect(session.header.cwd).toBe('/live/project')
     expect(acquireScope).not.toHaveBeenCalled()
@@ -169,13 +169,13 @@ describe('SessionSkillCatalog', () => {
     } as never)
     const acquireScope = vi.fn(() => Promise.resolve({ key: scope, [Symbol.asyncDispose]: async () => {} }))
     ctx.provide('agentPresets', { acquireScope } as never)
-    const list = vi.fn(() => Promise.resolve([]))
-    ctx.provide('skills', { list } as never)
+    const snapshot = vi.fn(async () => ({ complete: true, skills: [] }))
+    ctx.provide('skills', { snapshot } as never)
     const catalog = new SessionSkillCatalog(ctx)
 
     await expect(catalog.list({ sessionId }, new AbortController().signal)).resolves.toEqual({ skills: [] })
     expect(acquireScope).toHaveBeenCalledWith('minimal')
-    expect(list).toHaveBeenCalledWith({ cwd: '/cold/project', scope })
+    expect(snapshot).toHaveBeenCalledWith({ cwd: '/cold/project', scope, signal: expect.any(AbortSignal) })
     expect(ctx.agents.list()).toEqual([])
   })
 
@@ -191,12 +191,12 @@ describe('SessionSkillCatalog', () => {
     ctx.provide('agentPresets', {
       acquireScope: () => Promise.reject(new Error('unknown preset')),
     } as never)
-    const list = vi.fn(() => Promise.resolve([]))
-    ctx.provide('skills', { list } as never)
+    const snapshot = vi.fn(async () => ({ complete: true, skills: [] }))
+    ctx.provide('skills', { snapshot } as never)
     const catalog = new SessionSkillCatalog(ctx)
 
     await expect(catalog.list({ sessionId }, new AbortController().signal)).resolves.toEqual({ skills: [] })
-    expect(list).toHaveBeenCalledWith({ cwd: '/cold/project', scope: undefined })
+    expect(snapshot).toHaveBeenCalledWith({ cwd: '/cold/project', scope: undefined, signal: expect.any(AbortSignal) })
   })
 
   it.each([
@@ -253,7 +253,7 @@ describe('SessionSkillCatalog', () => {
       observeSession: () => Promise.resolve(observation(sessionId, { cwd: '/project' })),
     } as never)
     ctx.provide('skills', {
-      list: () => Promise.reject(new Error('catalog offline')),
+      snapshot: () => Promise.reject(new Error('catalog offline')),
     } as never)
     const catalog = new SessionSkillCatalog(ctx)
 

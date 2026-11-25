@@ -1,6 +1,6 @@
-/** Exercise real feedback services before the SDK closes the recorded root turn. */
+/** Exercise real feedback and Host Tool services before the SDK closes the recorded root turn. */
 export const name = 'snapshot-feedback-producer'
-export const inject = ['commands', 'messageFeedback', 'sessionFeedback']
+export const inject = ['commands', 'messageFeedback', 'sessionFeedback', 'tools']
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx - Composed runtime services.
@@ -22,8 +22,26 @@ export function apply(ctx) {
     if (!edited.ok) throw new Error(edited.error.code)
     const deleted = await ctx.messageFeedback.delete({ ...target, ifVersion: edited.value.version })
     if (!deleted.ok) throw new Error(deleted.error.code)
+    const definition = {
+      name: 'snapshot_host_action', description: 'SDK host-only operation.',
+      parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+        presentationMeta: () => ({ receipt: 'saved' }),
+      },
+      async execute(args) { return args.text },
+    }
+    const receipt = await ctx.tools.startHostCall(agent.session, {
+      callId: 'sdk-host-receipt', definition, arguments: { text: 'host action complete' },
+      source: { name: 'SDK snapshot', actor: { id: 'snapshot-actor', name: 'Snapshot actor' }, meta: { origin: 'host' } },
+    })
+    const outcome = await receipt.completion
+    if (outcome.status !== 'completed' || ctx.tools.schemas().some(tool => tool.name === definition.name)) {
+      throw new Error('SDK host-only operation did not complete outside model discovery')
+    }
     if (JSON.stringify(agent.session.deriveMessages()) !== JSON.stringify(messages)) {
-      throw new Error('feedback changed model-visible messages')
+      throw new Error('feedback or Host Tool changed model-visible messages')
     }
   })
 }

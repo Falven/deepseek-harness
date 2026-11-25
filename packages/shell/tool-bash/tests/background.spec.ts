@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, type SessionId } from '@deepseek-ai/dsh-session'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session/types'
@@ -42,6 +43,7 @@ async function setup() {
   provideWorkingDirectoryFixture(ctx)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
+  await ctx.plugin(LocalFileSystem)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(AgentRegistry)
@@ -95,6 +97,7 @@ describe('background bash output', () => {
     const jobs = ctx.jobs
     const job = jobs.list()[0]
     expect(job).toBeDefined()
+    expect(job).toMatchObject({ callId: `background-call-${callCounter}`, cwd: process.cwd() })
 
     // Live output appears in the ring while the command is still running.
     await until(() => retainedText(ctx, job!.id).includes('line-1') ? true : undefined)
@@ -471,6 +474,7 @@ describe('foreground commands as jobs', () => {
     provideWorkingDirectoryFixture(ctx)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SystemPrompt)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(AgentRegistry)

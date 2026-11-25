@@ -50,6 +50,7 @@ function fixture(overrides: Partial<Config> = {}) {
   }
   ctx.provide('sandboxPolicy', sandboxPolicy as never)
   ctx.provide('workingDirectory', workingDirectory as never)
+  ctx.provide('agents', { withInitiator: (_agent: Agent, operation: () => unknown) => operation() } as never)
   const { handle, checked } = fakeHandle()
   const subprocess = {
     terminalEnvironment: vi.fn(async (): Promise<SubprocessTerminalEnvironment> => ({ platform: 'posix', defaultShell: '/bin/bash' })),
@@ -1018,6 +1019,7 @@ it('wakes a waiting roster consumer and keeps other watchers when one stops', as
 it.skipIf(process.platform === 'win32')('runs a command typed by the agent in a real shell and renders its output', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'dsh-agent-terminal-'))
   const ctx = new Context()
+  ctx.provide('agents', { withInitiator: (_agent: Agent, operation: () => unknown) => operation() } as never)
   await ctx.plugin(LocalSubprocessRuntime)
   ctx.provide('sandboxPolicy', { defaultMode: 'danger-full-access', workspaceRoot: cwd } as never)
   ctx.provide('workingDirectory', { get: () => cwd, ensure: async () => cwd } as never)

@@ -19,13 +19,22 @@ import type { ComposerBlock, ComposerBlocks } from '../contract/composer-blocks.
 /** The per-session composer-block registry (one instance per plugin fiber). */
 export class ComposerBlockRegistry implements ComposerBlocks {
   private readonly stores = new Map<SessionId, SnapshotStore<ComposerBlock | undefined>>()
+  private readonly owners = new Map<SessionId, Map<string, ComposerBlock>>()
 
   /** @inheritdoc */
-  set(sessionId: SessionId, block: ComposerBlock | undefined): void {
+  set(sessionId: SessionId, block: ComposerBlock | undefined, owner = 'default'): void {
+    let owners = this.owners.get(sessionId)
+    if (block === undefined) owners?.delete(owner)
+    else {
+      if (owners === undefined) this.owners.set(sessionId, owners = new Map())
+      owners.set(owner, block)
+    }
+    if (owners?.size === 0) this.owners.delete(sessionId)
+    const active = owners?.values().next().value
     const store = this.storeFor(sessionId)
     const current = store.getSnapshot()
-    if (current?.reason === block?.reason) return
-    store.set(block)
+    if (current?.reason === active?.reason) return
+    store.set(active)
   }
 
   /** @inheritdoc */
@@ -40,5 +49,6 @@ export class ComposerBlockRegistry implements ComposerBlocks {
   /** @inheritdoc */
   forget(sessionId: SessionId): void {
     this.stores.delete(sessionId)
+    this.owners.delete(sessionId)
   }
 }

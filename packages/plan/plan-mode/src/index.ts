@@ -252,13 +252,13 @@ export class PlanModeController extends Service {
         name: 'plan',
         description: 'Enter or leave plan mode',
         input: { hint: '[off|message]', attachments: true },
-        handler: ({ agent, rawInput, attachments }) => {
+        handler: async ({ agent, rawInput, attachments, signal }) => {
           const message = rawInput.trim()
           if (message === 'off' && attachments.length > 0) {
             return { kind: 'error', text: 'Attachments cannot accompany /plan off.' }
           }
           if (message === 'off') {
-            switch (this.set(agent, false)) {
+            switch (await this.selectFromUser(agent, false, signal)) {
               case 'committed':
                 return { kind: 'success', text: 'Plan mode off.' }
               case 'queued':
@@ -274,7 +274,7 @@ export class PlanModeController extends Service {
                   : { kind: 'success', text: 'Plan mode is already inactive.' }
             }
           }
-          const outcome = this.set(agent, true)
+          const outcome = await this.selectFromUser(agent, true, signal)
           if (message !== '' || attachments.length > 0) {
             agent.steer(createUserMessage({
               content: [
@@ -469,6 +469,23 @@ export class PlanModeController extends Service {
     this.pendingIntents.delete(session)
     agent.inject(this.narration(active))
     return 'committed'
+  }
+
+  /** Commit a human selection through the loop's settings boundary. */
+  private async selectFromUser(
+    agent: Agent, active: boolean, signal?: AbortSignal,
+  ): Promise<ReturnType<PlanModeController['set']>> {
+    if (agent.changeSettings === undefined) return this.set(agent, active)
+    const changed = await agent.changeSettings({ name: 'plan', value: active }, () => {
+      const session = agent.session
+      const pending = this.pendingIntents.get(session)
+      if (active === this.loggedActive(session) && (pending === undefined || pending.active === active)) return false
+      session.append('plan/mode', { active })
+      this.pendingIntents.delete(session)
+      agent.inject(this.narration(active))
+      return true
+    }, signal)
+    return changed ? 'committed' : 'noop'
   }
 
   /** Commit a pending transition and return its notice for user selections. */

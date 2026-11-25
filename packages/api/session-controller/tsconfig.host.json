@@ -121,6 +121,9 @@
       "path": "../remote-access/tsconfig.host.json"
     },
     {
+      "path": "../workspace-files/tsconfig.host.json"
+    },
+    {
       "path": "../../typert/registry"
     },
     {

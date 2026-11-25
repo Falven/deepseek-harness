@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Save plugin configuration in the active profile’s patch and apply it immediately. Writes validate the complete candidate before touching disk and serialize with profile changes and HMR. Invalid values and higher-layer overrides leave the file unchanged.
+Save plugin configuration in the active profile’s patch and apply it after Host admission. Writes validate the complete candidate before touching disk and serialize with profile changes and HMR. Invalid values and higher-layer overrides leave the file unchanged.
 
 ## Table of Contents
 
@@ -39,6 +39,8 @@ Use [settings](../../settings/settings/README.md) for forms restricted to live f
 <summary>Implementation internals — click to expand</summary>
 
 The [editor](src/index.ts) reconciles external changes before deriving a candidate, locks the profile manifest alongside other profile operations, and atomically replaces its config override. It preserves YAML comments and `!!js` expressions outside replaced values. A failed reconciliation restores the prior document and reloads the prior patches.
+
+When a Host defers activation, `edit()` keeps the saved document and returns after `ProfileReloadDeferred`; the Host's completion promise settles after the queued reload. With HMR, that continuation reenters its reload queue. Other reconciliation failures restore the prior document.
 
 Configuration reads share one composition for entries without profile config overrides. Overridden entries are composed separately with only their own override removed; profile inserts and other entries' overrides remain effective. Returned configs are detached, and compositions are not cached between reads.
 

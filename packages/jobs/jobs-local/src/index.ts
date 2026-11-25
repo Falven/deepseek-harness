@@ -80,6 +80,8 @@ interface TrackedJob {
   toolCall: JobToolCall | undefined
   kind: JobKind
   label: string
+  callId: string | undefined
+  cwd: string | undefined
   outputLimitBytes: number | undefined
   /** Exact lifecycle owner; session-id authorization is derived from it. */
   owner: Agent | undefined
@@ -261,6 +263,8 @@ export class LocalJobRegistry extends JobRegistry {
       toolCall,
       kind: spec.kind,
       label: spec.label,
+      callId: spec.callId ?? toolCall?.callId,
+      cwd: spec.cwd,
       outputLimitBytes: spec.outputLimitBytes,
       owner,
       cancel: hooks.cancel.bind(hooks),
@@ -436,6 +440,8 @@ export class LocalJobRegistry extends JobRegistry {
       id: job.id,
       kind: job.kind,
       label: job.label,
+      ...job.callId !== undefined ? { callId: job.callId } : {},
+      ...job.cwd !== undefined ? { cwd: job.cwd } : {},
       ...owner !== undefined ? { owner } : {},
       ...job.outputLimitBytes !== undefined ? { outputLimitBytes: job.outputLimitBytes } : {},
       status: job.status,

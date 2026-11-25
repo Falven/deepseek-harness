@@ -34,7 +34,7 @@ export type GenericToolCardProps = ToolCallOwnerProps & {
 
 /** @param props - current tool stage and locale. @returns its preparation or dispatched card. */
 export function GenericToolCard({
-  toolName, block, cwd, home, openFile, getFileTriggerProps, inspect, useDisclosure, t,
+  toolName, block, cwd, home, openFile, getFileTriggerProps, inspect, useDisclosure, commandActivity, t,
 }: GenericToolCardProps) {
   const model = toolRowModel(toolName, block, cwd, home, (image) => {
     if (typeof image !== 'object' || image === null || Array.isArray(image)) return undefined
@@ -62,6 +62,7 @@ export function GenericToolCard({
     <ToolRow
       fileContextMenuProps={model.filePath === undefined ? undefined : getFileTriggerProps(model.filePath)}
       useDisclosure={useDisclosure}
+      commandActivity={commandActivity}
       t={t}
       variant={model.variant}
       toolName={toolName}
@@ -72,7 +73,10 @@ export function GenericToolCard({
       // args interaction. A card is not an args body: a read/write/edit row is
       // single-file AND carries a card, so the card expands under the path link.
       bodyRaw={singleFile || autoReview !== null ? null : model.bodyRaw}
-      output={autoReview?.output ?? model.output}
+      output={block.source && 'kind' in block ? JSON.stringify({
+        status: block.status, startedAt: block.callTime, completedAt: block.time,
+        source: block.source, content: block.content, value: block.value, meta: block.meta, error: block.error,
+      }, null, 2) : autoReview?.output ?? model.output}
       errorSummary={autoReview?.summary ?? model.errorSummary}
       terminal={terminal}
       diff={diff}

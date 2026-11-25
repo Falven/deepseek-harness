@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../api/job-controller/tsconfig.client.json"
+    },
+    {
       "path": "../../spill/spill-policy"
     },
     {

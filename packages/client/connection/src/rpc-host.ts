@@ -70,10 +70,12 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * Provide the Host half over the active HTTP server.
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
+   * @param externalAuth - accept a browser Peer after mandatory WebServer application admission.
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
+    private readonly externalAuth = false,
   ) {
     super(ctx, 'connection')
     this.owner = ctx
@@ -89,9 +91,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
       if (!this.isTrustedRequest(facts)) return { kind: 'deny', status: 403 }
       if (policy === 'anonymous') return { kind: 'allow' }
       const admission = this.authentication.authenticate(facts)
-      return 'rejection' in admission
-        ? { kind: 'deny', status: admission.rejection }
-        : { kind: 'allow', peer: admission.peer }
+      if ('peer' in admission) return { kind: 'allow', peer: admission.peer }
+      if (admission.rejection === 401 && this.externalAuth
+        && this.owner.get('webServer')?.requiresExternalAdmission === true
+        && !this.disposed && !facts.signal?.aborted && !facts.socket?.destroyed) {
+        return { kind: 'allow', peer: this.browserPeer }
+      }
+      return { kind: 'deny', status: admission.rejection }
     })
   }
 

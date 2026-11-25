@@ -386,12 +386,14 @@ describe('WorkspaceRegistry create and lookup', () => {
     const secondDir = await makeDir('second')
     const alias = join(base, 'first-link')
     await symlink(firstDir, alias)
-    const { registry, pool } = await harness()
+    const { registry, pool, ctx } = await harness()
+    ctx.on('workspace/default-title', () => 'Upstream project')
     const first = await registry.create(firstDir, 'Original')
     const second = await registry.create(secondDir)
     const reused = await registry.create(alias, 'Ignored')
     expect(reused).toBe(first)
     expect(first.title).toBe('Original')
+    expect(second.title).toBe('Upstream project')
     expect(registry.list()).toEqual([second, first])
     expect(storedState(pool).workspaceIds).toEqual([second.id, first.id])
     expect(await registry.resolveByPath(alias)).toBe(first)
@@ -1464,7 +1466,9 @@ describe('first-use Workspace preparation', () => {
 
   it('keeps the initialization marker across deletion and restart', async () => {
     const h = await firstUse()
+    h.ctx.on('workspace/default-title', () => 'Upstream project')
     const workspace = (await h.registry.initializeDefault(h.resolveDirectory))!
+    expect(workspace.title).toBe('Upstream project')
     await workspace.setTitle('Renamed')
     expect((await h.registry.initializeDefault(h.resolveDirectory))?.title).toBe('Renamed')
     await h.registry.delete(workspace.id)

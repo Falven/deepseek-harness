@@ -108,6 +108,19 @@ describe('Presented workspace file native open route', () => {
     expect(opener.mock.lastCall?.[0].path).toBe(await realpath(join(fork, file.path)))
   })
 
+  it('uses the Session filesystem root hook for declared files', async () => {
+    const { root, cwd, file, ctx, open, opener } = await fixture()
+    const remote = join(root, 'selected-session')
+    await mkdir(remote)
+    await writeFile(join(remote, file.path), 'selected Session')
+    ctx.on('workspace-files/resolve-workspace-root', async ({ workspaceRoot }) => {
+      expect(workspaceRoot).toBe(cwd)
+      return remote
+    })
+    expect((await open()).status).toBe(204)
+    expect(opener.mock.lastCall?.[0].path).toBe(await realpath(join(remote, file.path)))
+  })
+
   it.each(['', '?seq=7&index=0', '?sessionId=owner&index=0', '?sessionId=owner&seq=7',
     '?sessionId=owner&seq=-1&index=0', '?sessionId=owner&seq=7&index=0.1',
     '?sessionId=owner&seq=9007199254740992&index=0', '?sessionId=owner&seq=7&index=9007199254740992',

@@ -325,14 +325,17 @@ export class SessionCommandController {
     if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
     if (request.content.length === 0) {
       try {
-        return await agent.runMaintenance(() => {
+        return await agent.runMaintenance(async () => {
+          if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
+          const message = await this.attribute(agent, createUserMessage({ content: [], source }))
+          if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
           const inbox = agent.inbox
           if (request.mode !== 'queue' || this.continuation.stateOf(agent.session).ending === null
             || inbox.nextTurn.length > 0 || inbox.nextStep.some(message => message.source.kind === 'user')) {
             throw new RemoteError('session/agent-busy', 'generation continuation is unavailable', { reason: 'NO_CONTINUABLE_FAILURE_OR_PENDING_INPUT' })
           }
-          agent.followup(createUserMessage({ content: [], source }))
-          return Promise.resolve({ accepted: true as const })
+          agent.followup(message)
+          return { accepted: true as const }
         })
       } catch (error: unknown) {
         if (remoteErrorOf(error) !== undefined) throw error
@@ -361,9 +364,8 @@ export class SessionCommandController {
             }
           }
         }
-        const content = await this.ctx.attachments.admitPromptContent(admission.content)
-        if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
-        const message: UserMessage = createUserMessage({ content, source })
+        const content = await this.ctx.waterfall('session/attachment-admit', { agent }, () => this.ctx.attachments.admitPromptContent(admission.content))
+        const message = await this.attribute(agent, createUserMessage({ content, source }))
         if (this.ctx.agents.get(agent.id) !== agent) {
           throw new RemoteError(
             'session/not-found',
@@ -371,6 +373,8 @@ export class SessionCommandController {
             { sessionId: agent.id },
           )
         }
+        // Another request may be accepted while this request awaits admission.
+        if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
         using binding = this.ctx.fileUploads.bindPrompt(agent, admission.receiptIds, request.requestId)
         if (request.mode === 'steer') agent.steer(message)
         else agent.followup(message)
@@ -386,6 +390,12 @@ export class SessionCommandController {
       return { accepted: true }
     }
     return hasImage ? this.agents.serializeImageAdmission(agent, admit) : admit()
+  }
+
+  private async attribute(agent: Agent, message: UserMessage): Promise<UserMessage> {
+    const source = await this.ctx.waterfall('session/input-source',
+      { agent, message }, () => Promise.resolve(message.source))
+    return freezeMessage<UserMessage>({ ...message, source })
   }
 
   /** Recover first input acceptance, including claimed or removed messages, from unseen log entries. */
@@ -428,7 +438,8 @@ export class SessionCommandController {
    */
   async attachment(request: SessionAttachmentRequest): Promise<SessionAttachmentValue> {
     try {
-      const stored = await this.ctx.attachments.readImage(request.attachment)
+      const stored = await this.ctx.waterfall('session/attachment-read',
+        { sessionId: request.sessionId }, () => this.ctx.attachments.readImage(request.attachment))
       return {
         attachment: stored.ref,
         data: Buffer.from(stored.data).toString('base64'),
@@ -490,9 +501,21 @@ export class SessionCommandController {
     if (located === undefined) {
       throw new RemoteError('session/queue-item-not-found', 'queued item is no longer pending', { itemId: request.itemId })
     }
-    const { target, message } = located
+    const { target } = located
+    let message = located.message
     if (request.action.kind === 'steer' && (target !== 'next-turn' || agent.status !== 'running')) {
       throw new RemoteError('session/steer-unavailable', 'current turn no longer accepts steering', { itemId: request.itemId })
+    }
+    if (request.action.kind !== 'remove') {
+      message = await this.attribute(agent, message)
+      const current = [...agent.inbox.nextTurn, ...agent.inbox.nextStep]
+        .find(item => item.id === request.itemId)
+      if (current !== located.message) {
+        throw new RemoteError('session/queue-item-not-found', 'queued item changed during admission', { itemId: request.itemId })
+      }
+      if (request.action.kind === 'steer' && agent.status !== 'running') {
+        throw new RemoteError('session/steer-unavailable', 'current turn no longer accepts steering', { itemId: request.itemId })
+      }
     }
     switch (request.action.kind) {
       case 'edit':

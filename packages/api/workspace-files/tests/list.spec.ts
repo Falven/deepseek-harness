@@ -1,7 +1,7 @@
-/** The `list` endpoint: the same containment gates as `read`, plus the entry cap. */
+/** The `list` endpoint: the same filesystem authority as `read`, plus the entry cap. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { failureOf, openWorkspace, signal, type Harness } from './harness.ts'
 
 let harness: Harness
@@ -25,12 +25,12 @@ const directoryLink = (target: string, link: string): Promise<void> =>
   symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
 
 describe('workspaceFiles.list — the happy path', () => {
-  it('lists the root as the empty workspace path, with types and file sizes', async () => {
+  it('lists the root with its absolute path, with types and file sizes', async () => {
     await mkdir(join(workspace, 'src'))
     await writeFile(join(workspace, 'notes.txt'), 'hello', 'utf8')
     await writeFile(join(workspace, '.hidden'), '', 'utf8')
     const listing = await endpoint().list(harness.scope, '.', signal())
-    expect(listing.path).toBe('')
+    expect(listing.absolutePath).toBe(await realpath(workspace))
     expect(listing.truncated).toBe(false)
     expect(listing.entries).toEqual([
       { name: '.hidden', type: 'file', size: 0 },
@@ -39,17 +39,17 @@ describe('workspaceFiles.list — the happy path', () => {
     ])
   })
 
-  it('accepts the absolute workspace root and reports the same empty path', async () => {
+  it('accepts the absolute workspace root', async () => {
     const listing = await endpoint().list(harness.scope, workspace, signal())
-    expect(listing.path).toBe('')
+    expect(listing.absolutePath).toBe(await realpath(workspace))
     expect(listing.entries).toEqual([])
   })
 
-  it('reports a nested directory as its `/`-joined path relative to the root, decoded', async () => {
+  it('reports a nested directory with its decoded absolute path', async () => {
     await mkdir(join(workspace, 'src', 'my dir', '子目录'), { recursive: true })
     await writeFile(join(workspace, 'src', 'my dir', '子目录', 'a.ts'), '', 'utf8')
     const listing = await endpoint().list(harness.scope, 'src/my dir/子目录', signal())
-    expect(listing.path).toBe('src/my dir/子目录')
+    expect(listing.absolutePath).toBe(await realpath(join(workspace, 'src/my dir/子目录')))
     expect(listing.entries.map(entry => entry.name)).toEqual(['a.ts'])
   })
 
@@ -74,7 +74,7 @@ describe('workspaceFiles.list — the happy path', () => {
     await writeFile(join(workspace, 'real-dir', 'child.txt'), 'x', 'utf8')
     await directoryLink(join(workspace, 'real-dir'), join(workspace, 'dir-link'))
     const listing = await endpoint().list(harness.scope, 'dir-link', signal())
-    expect(listing.path).toBe('real-dir')
+    expect(listing.absolutePath).toBe(await realpath(join(workspace, 'real-dir')))
     expect(listing.entries).toEqual([{ name: 'child.txt', type: 'file', size: 1 }])
   })
 })
@@ -96,20 +96,20 @@ describe('workspaceFiles.list — the entry cap', () => {
 })
 
 describe('workspaceFiles.list — gates', () => {
-  it('rejects an absolute directory outside the workspace', async () => {
-    const failure = await failureOf(endpoint().list(harness.scope, outside, signal()))
-    expect(failure.code).toBe('workspace-file/outside-workspace')
+  it('lists an absolute directory outside the workspace', async () => {
+    const listing = await endpoint().list(harness.scope, outside, signal())
+    expect(listing.absolutePath).toBe(await realpath(outside))
   })
 
-  it('rejects a traversal that climbs out of the workspace', async () => {
-    const failure = await failureOf(endpoint().list(harness.scope, '..', signal()))
-    expect(failure.code).toBe('workspace-file/outside-workspace')
+  it('lists the parent of the workspace', async () => {
+    const listing = await endpoint().list(harness.scope, '..', signal())
+    expect(listing.absolutePath).toBe(await realpath(dirname(workspace)))
   })
 
-  it('rejects a directory link that resolves outside the workspace', async () => {
+  it('lists a directory link that resolves outside the workspace', async () => {
     await directoryLink(outside, join(workspace, 'escape'))
-    const failure = await failureOf(endpoint().list(harness.scope, 'escape', signal()))
-    expect(failure.code).toBe('workspace-file/outside-workspace')
+    const listing = await endpoint().list(harness.scope, 'escape', signal())
+    expect(listing.absolutePath).toBe(await realpath(outside))
   })
 
   it('rejects a directory link whose target is gone', async () => {

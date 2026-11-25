@@ -1,8 +1,8 @@
 /**
  * The model-facing filesystem discovery tool suite (`glob`, `grep`) over the
- * packaged ripgrep binary (`@vscode/ripgrep`). This single plugin registers
- * both tools; the binary ships inside the npm dependency, so no system `rg`
- * install and no shell layer is involved.
+ * ripgrep. This single plugin registers both tools. Local execution uses the
+ * packaged binary; remote providers may use their own `rg` executable. No
+ * shell layer is involved.
  *
  * ## Spawn-backed, not a `ctx.fs` provider method
  *
@@ -14,14 +14,12 @@
  * {@link module:@deepseek-ai/dsh-tool-fs-search/grep}), result parsing,
  * retention, formatted-result spill, and timeout declaration; the subprocess
  * seam owns spawn execution, process-tree termination, environment scrubbing,
- * and raw output capture. The package injects `tools`, `systemPrompt`, and
- * `subprocess` — deliberately NOT `fs`, and `ctx.spillStore` is read
+ * and raw output capture. The package injects `tools`, `systemPrompt`, `fs`, and
+ * `subprocess`; `ctx.spillStore` is read
  * opportunistically with `ctx.get()` because formatted-result spill is optional.
  *
- * Returned paths are displayed relative to the resolved workdir and are
- * follow-up-readable only in co-located deployments where the workdir and the
- * filesystem `read` root are the same workspace — a documented v1 deployment
- * requirement, not runtime-validated.
+ * Returned paths are displayed relative to the resolved workdir. Filesystem
+ * and subprocess providers must share one execution world.
  *
  * @module @deepseek-ai/dsh-tool-fs-search
  */
@@ -68,7 +66,7 @@ export type { GrepMatch, RipgrepRun, SearchErrorCode } from './search-core.ts'
 export const name = 'tool-fs-search'
 
 /** Services required by the search tool suite (`spillStore` is optional, read via `ctx.get()`). */
-export const inject = ['tools', 'systemPrompt', 'subprocess', 'workingDirectory']
+export const inject = ['tools', 'systemPrompt', 'fs', 'subprocess', 'workingDirectory']
 
 /** Plugin config; over-cap glob sampling is an explicit deployment choice and the remaining fields have defaults. */
 export interface Config {
@@ -118,9 +116,8 @@ function assertPositiveInteger(name: string, value: number): void {
 }
 
 /**
- * Register the `glob`/`grep` filesystem discovery tool suite. The packaged
- * ripgrep binary is always available (an npm dependency), so registration is
- * unconditional.
+ * Register the `glob`/`grep` filesystem discovery tool suite. Executable
+ * resolution happens at call time, so registration is unconditional.
  *
  * @param ctx - plugin context; registrations are effects scoped to this plugin.
  * @param config - resolved plugin configuration from schemastery.

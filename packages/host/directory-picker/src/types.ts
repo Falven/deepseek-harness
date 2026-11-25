@@ -36,4 +36,6 @@ export interface DirectoryListing {
    * the name-sorted tail (hidden rows count toward the bound).
    */
   truncated: boolean
+  /** False when this backend permits selection but not folder creation. Omitted means creation is available. */
+  canCreate?: boolean
 }

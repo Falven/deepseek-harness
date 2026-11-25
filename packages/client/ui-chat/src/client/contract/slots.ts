@@ -236,6 +236,7 @@ export interface UserBeforeOwnerProps {
 
 /** Stable owner currency delivered to a keyed Chat renderer. */
 export interface ChatNodeOwnerProps {
+  sessionId: SessionId
   /** Renderer-owned Node portion selected by the grouping Definition. */
   groupPart?: string
   cwd?: string | undefined
@@ -246,6 +247,13 @@ export interface ChatNodeOwnerProps {
   loadImage: MessageImageLoader
   /** Turn-process state when this Node belongs to a projected Turn. */
   turnProcess?: TurnProcessOwnerProps | undefined
+}
+
+/** Durable source or pending submission identity offered above a user bubble. */
+export interface UserMessageHeaderOwnerProps {
+  readonly source?: unknown
+  readonly requestId?: string
+  readonly time?: number
 }
 
 /** One attachment in the original user-message display order. */
@@ -381,7 +389,7 @@ export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps,
 /** Full props of the Chat-owned flow renderer. */
 export type ChatFlowSlotProps =
   PropsRuntime<'conversation.chat.flow'>
-  & PropsRenderSlots<'conversation.chat.node'>
+  & PropsRenderSlots<'conversation.chat.node' | 'conversation.chat.user.header'>
   & PropsRenderFactories
   & PropsStore<ChatStore>
   & InjectFace<ChatFlowDataInjected>
@@ -446,6 +454,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'conversation.chat.aside': { kind: 'single'; scope: 'session' }
 
+    /**
+     * Optional content above each user or steering bubble. Register a component
+     * that reads `source`, `time`, or a pending `requestId` from the Session
+     * owner props. A registration replaces any other occupant; with no
+     * occupant, the bubble has no extra header.
+     */
+    'conversation.chat.user.header': { kind: 'single'; scope: 'session'; owner: UserMessageHeaderOwnerProps }
     /** Ordered Chat rows and local echoes with viewport-bound visibility hooks. */
     'conversation.chat.flow': {
       kind: 'single'

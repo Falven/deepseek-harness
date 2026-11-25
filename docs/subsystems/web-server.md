@@ -50,11 +50,11 @@ interface WebResourceRoute {
 
 All `webserver/*` events use the corresponding WebServer as their dispatch subject, including `index-inject` and `entry-url`. Ordinary listeners match the emitter's `webServer` isolation; explicit `{ global: true }` listeners bypass that filter. Passing a Peer as event data does not select listeners. Custom carriers and application emitters must supply the WebServer subject.
 
-Match order is exact, longest prefix, then the single-owner fallback; upgrades match exact paths. After matching, `auth` resolves to `anonymous`, `required` (default), or `deny`, either directly or through a synchronous request selector. `deny` returns 403 without an authorization event. Other policies emit synchronous `webserver/authorize`; the first decision wins. Without a decision, `anonymous` allows and `required` returns 503. Connection checks sources for both and calls ConnectionAuthentication only for authenticated routes. Anonymous assets are therefore credential-free, not exempt from active Connection source policy.
+HTTP matches exact routes, then the longest matching prefix, then the single-owner fallback. Upgrades match exact routes, then the longest matching prefix. After matching, `auth` resolves to `anonymous`, `required` (default), or `deny`, either directly or through a synchronous request selector. `deny` returns 403 without an authorization event. Other policies emit synchronous `webserver/authorize`; the first decision wins. Without a decision, `anonymous` allows and `required` returns 503. Connection checks sources for both and calls ConnectionAuthentication only for authenticated routes. Anonymous assets are therefore credential-free, not exempt from active Connection source policy.
 
 Handlers receive the admitted Peer as their trailing parameter; resources receive it through the existing `resource(request, peer?)` argument. Authenticated routes require a live Peer; anonymous routes may omit it. After admission, resources accept only GET/HEAD. Trusted `readResource(request, peer)` follows the same match order and reaches only resources, bypassing source and credential checks but still returning 403 for a resolved `deny`. The [frontend fallback](../../packages/host/frontend-static/README.md) selects authenticated index access and anonymous static assets, then renders index startup data for the supplied Peer.
 
-`webserver/request(request, response, next)` remains an HTTP waterfall before route selection and admission; a listener owns the response or awaits `next()`. The [Token plugin](../../packages/host/authentication-token/README.md) uses it for root Token exchange and registers `/connect` with anonymous auth, verifying the launch token after Connection source checks. Page resources consume their admitted Peer without repeating authentication.
+`webserver/request(request, response, next)` remains an HTTP waterfall before route selection and admission; a listener owns the response or awaits `next()`. With `externalAdmission` enabled, the application’s registered provider wraps HTTP dispatch before this waterfall, and wraps upgrade dispatch before route authorization. Until it registers, HTTP returns 503 and upgrade sockets close. The [Token plugin](../../packages/host/authentication-token/README.md) uses it for root Token exchange and registers `/connect` with anonymous auth, verifying the launch token after Connection source checks. Page resources consume their admitted Peer without repeating authentication.
 
 After successful upgrade admission, `webserver/upgrade(req, socket, head, peer, next)` runs before the registered protocol handler. It carries the admitted Peer, or `undefined` for anonymous access; denied requests never enter it. Listeners handle the Socket or await `next()`; the fallback awaits the route handler, including asynchronous completion. Middleware or handler failures are logged and destroy the Socket. On `/api/remote.mux`, Token applies single-Socket ownership and credential revocation only to API Peers in its own map; other Providers delegate without Token policy.
 
@@ -94,6 +94,8 @@ interface Config {
   compressionLevel?: number
   /** Minimum known response length eligible for gzip; unknown-length streams are eligible. @default 1024 */
   compressionThresholdBytes?: number
+  /** Reject all traffic until an application admission provider is registered. @default false */
+  externalAdmission?: boolean
 }
 ```
 
@@ -280,12 +282,19 @@ getOrigin(): string
 register(route: WebRoute | WebResourceRoute): () => void
 
 /**
- * Register an exact-path HTTP upgrade route. Duplicate paths throw because
+ * Register an HTTP upgrade route. Duplicate paths of the same kind throw because
  * one socket can have only one protocol owner.
  * @param route - pathname and handler owning negotiation plus socket use.
  * @returns the disposer removing the route.
  */
 registerUpgrade(route: WebUpgradeRoute): () => void
+
+/**
+ * Register one process-owned gate, retained independently of route ownership.
+ * @param admission - provider that authenticates incoming requests.
+ * @returns a disposer removing the provider.
+ */
+registerAdmission(admission: WebAdmissionProvider): () => void
 
 /**
  * Claim the fallback seat: the handler or resource answering every request

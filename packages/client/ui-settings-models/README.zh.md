@@ -39,6 +39,8 @@ kind: "package-reference"
 
 应用设置并关闭编辑器后，当前提供商、settings 与凭据快照就绪时才显示保存状态。打开任一行的编辑器、添加提供商和打开移除确认都会等待该刷新。新打开的 Models 区域或页面加载失败后的重试会等到 ready 快照后才挂载编辑器。后台刷新期间，只要编辑器仍挂载，已打开的草稿就会保留用户的修改；页面加载失败或提供商被移除可能关闭编辑器。
 
+`onboarding: false` 在 Client 激活时禁用 Web 欢迎和凭据步骤，模型设置仍可使用。
+
 Host 配置 `credentialOnboarding` 默认为 `true`。Electron preload 标记会抑制自动凭证引导和 Web 欢迎须知；模型设置页与显式 API Key 编辑仍然可用。[账号插件](../ui-settings-account/README.zh.md#desktop-onboarding)负责 Desktop 引导。其他原生壳可以通过 `credentialOnboarding: false` 仅禁用凭证步骤。该字段是 volatile 字段，经插件的[同步 Config](../modules/README.zh.md#synced-plugin-configuration) 送达浏览器：修改决定尚未挂载的凭证步骤是否自动打开，已挂载的步骤保留其决定，因此已打开的步骤不会被收回。浏览器未收到值时使用 `true`。该字段是配置，不是持久化的完成标记。
 
 ### API 密钥
@@ -80,6 +82,8 @@ pi-ai 容量字段为空时，上下文窗口显示 `1M`，最大输出 token �
 ### 扩展 slot
 
 本分区为仓库外分发的插件声明两个席位，类型定义在 [`src/client/slot-contract.ts`](src/client/slot-contract.ts) 并从 `./client` 导出。`settings.models.provider-card`（keyed）渲染在每张展示目录行的卡片内部——已保存行的卡片、其首次运行 setup 形态、以及「添加提供商」草稿卡——以 `entryKey = settingsNs` 分发，owner props 携带该行的 `ConfigurableProviderView`、其 configured 状态与已确认的 api-key 凭据状态，因此以某适配器家族的 namespace 注册一次即可收到该家族的全部卡片，含手工声明的路由；手工声明的草稿卡尚无目录行，保存之前不分发。`settings.models.footer`（list）渲染在行列表与新增控件之后。注册方通过 `ctx.slots.inject` 激活，并以 type-only import 引入本包 `/client` 入口；没有注册方时两个席位均不渲染任何内容。
+
+适配器可通过提供商目录为自己的命名空间选择原生 pi-ai 编辑器。它的键控 `settings.models.provider-authentication` 插槽替换编辑器自带的凭据面板。插槽接收设置草稿、当前生效值、写入状态与原生应用回调，还可渲染 `settings.models.api-key` 来输入只写凭据。没有插槽贡献的命名空间继续使用原生凭据面板。
 
 Models 页面包含 **DeepSeek 账号**（`deepseek-account`，英文为 **DeepSeek Account**）。该行显示 **已登录** 状态，不提供编辑器：模型来自账号的模型列表，[模型覆盖](../../llm/llm-deepseek-account/README.zh.md#use-this-package)写在 `cordis.patch.yml` 中。账号可用模型目录为空时隐藏账号行，包括登录前和退登后；账号模型恢复可用时重新显示。
 

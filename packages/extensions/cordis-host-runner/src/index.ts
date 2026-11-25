@@ -10,7 +10,7 @@ import type { Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type MessageSource } from '@deepseek-ai/dsh-llm'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'cordis-host-runner': { kind: 'cordis-host-runner' }
@@ -97,6 +97,15 @@ export {
 }
 
 declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Capture the activation's source before approval or delayed completion.
+     * @param request - The requesting Agent.
+     * @param next - The native continuation source.
+     * @mode waterfall
+     */
+    'cordis/run-source'(request: { agent: Agent }, next: () => MessageSource): MessageSource
+  }
   interface Context {
     /** Process-local dynamic Plugin registry and lifecycle service. */
     dynamicCordisRunner: DynamicCordisRunnerService
@@ -152,6 +161,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
 
   private readonly rootCtx: Context
   private readonly registry = new DynamicCordisRegistry()
+  private readonly runSources = new WeakMap<DynamicCordisRunAttempt, MessageSource>()
   private readonly inspectRegistry: CordisInspectRegistryService
   private readonly starting = new Map<CordisDynamicPluginId, Promise<DynamicCordisHostHalfResult>>()
   private readonly resolved: ResolvedConfig
@@ -286,7 +296,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     if (this.registry.pendingRequestFor(pluginId) !== undefined) {
       return { ok: false, reason: 'transition-in-flight', message: `dynamic plugin "${pluginId}" already has a pending run request` }
     }
-    const attempt = this.createAttempt(plan)
+    const attempt = this.createAttempt(agent, plan)
     plan.plugin.nextPackageId = packageId
     plan.plugin.latestRun = attempt
     if (plan.definition.clientCode === undefined) {
@@ -309,6 +319,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       pluginRunId: attempt.pluginRunId,
       mode,
       requiresApproval,
+      source: this.runSource(attempt),
     })
     this.ctx.emit('cordis/request-run', {
       requestId,
@@ -378,7 +389,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         && plan.plugin.latestRun?.pluginRunId === plan.plugin.run.pluginRunId
         ? plan.plugin.latestRun
         : undefined
-      attempt = attached ?? this.createAttempt(plan)
+      attempt = attached ?? this.createAttempt(agent, plan)
       if (attached === undefined) {
         plan.plugin.nextPackageId = packageId
         plan.plugin.latestRun = attempt
@@ -723,7 +734,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         attempt.status = 'failed'
       }
       if (definition !== undefined && shouldSteer) {
-        this.steerRenderFailure(agent, plugin, definition, pluginRunId, failure)
+        this.steerRenderFailure(agent, plugin, definition, run, failure)
       }
     }
     return await Promise.resolve(null)
@@ -867,6 +878,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     const run: DynamicCordisRun = {
       pluginRunId: attempt.pluginRunId,
       packageId: definition.packageId,
+      source: this.runSource(attempt),
       handlers: new Map(),
       handlerDisposers: [],
       reportedRuntimeErrors: new Set(),
@@ -1065,7 +1077,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     }
     agent.steer(createUserMessage({
       content: [{ type: 'text', text }],
-      source: { kind: 'cordis-host-runner' },
+      source: pending.source,
     }))
   }
 
@@ -1073,9 +1085,10 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     agent: Agent,
     plugin: DynamicCordisPlugin,
     definition: DynamicCordisDefinition,
-    pluginRunId: CordisDynamicPluginRunId,
+    run: DynamicCordisRun,
     failure: DynamicCordisRenderFailure,
   ): void {
+    const pluginRunId = run.pluginRunId
     agent.steer(createUserMessage({
       content: [{
         type: 'text',
@@ -1085,7 +1098,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
           + `entryAbdicated: ${failure.abdicated}\n`
           + 'Report the Client render failure to the user; the definition can be stopped through the Cordis panel.',
       }],
-      source: { kind: 'cordis-host-runner' },
+      source: run.source,
     }))
   }
 
@@ -1109,7 +1122,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
           + 'The Plugin remains running. Report the Host handler failure to the user. If the handler needs a Service, either declare '
           + 'that Service in the returned Plugin inject list or read it with ctx.get(name) and handle undefined.',
       }],
-      source: { kind: 'cordis-host-runner' },
+      source: run.source,
     }))
   }
 
@@ -1132,7 +1145,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
           + `(${run.pluginRunId}) after activation.\n${formatErrorDetails(failure)}\n`
           + 'The Plugin remains running. Report the guard rejection to the user; it can be stopped through the Cordis panel.',
       }],
-      source: { kind: 'cordis-host-runner' },
+      source: run.source,
     }))
   }
   /* jscpd:ignore-end */
@@ -1191,8 +1204,15 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     this.announceResolved(requestId, { ok: false, reason: 'rejected' }, 'cancelled')
   }
 
-  private createAttempt(plan: ActivationPlan): DynamicCordisRunAttempt {
-    return {
+  private runSource(attempt: DynamicCordisRunAttempt): MessageSource {
+    const source = this.runSources.get(attempt)
+    if (source === undefined) throw new Error('Plugin activation has no captured continuation source.')
+    return source
+  }
+
+  private createAttempt(agent: Agent, plan: ActivationPlan): DynamicCordisRunAttempt {
+    const source = this.ctx.waterfall('cordis/run-source', { agent }, (): MessageSource => ({ kind: 'cordis-host-runner' }))
+    const attempt: DynamicCordisRunAttempt = {
       pluginRunId: brandString<CordisDynamicPluginRunId>(this.registry.mintPluginRunId()),
       packageId: plan.definition.packageId,
       mode: plan.mode,
@@ -1206,6 +1226,8 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         waitingFor: [],
       },
     }
+    this.runSources.set(attempt, source)
+    return attempt
   }
 
   private failAttempt(

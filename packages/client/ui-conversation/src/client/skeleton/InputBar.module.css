@@ -423,6 +423,28 @@
   cursor: default;
 }
 
+/* Public host presentation tokens, deliberately scoped to Send rather than Stop. */
+.send {
+  width: var(--dsh-send-size, 32px);
+  height: var(--dsh-send-size, 32px);
+  border-radius: var(--dsh-send-radius, 999px);
+  background: var(--dsh-send-background, var(--dsw-alias-button-info-fill));
+  color: var(--dsh-send-color, var(--dsw-alias-label-on-color));
+  transform: var(--dsh-send-transform, none);
+}
+
+@media (hover: hover) {
+  .send:hover:not(:disabled) {
+    background: var(--dsh-send-hover-background, var(--dsw-alias-button-info-hover));
+    color: var(--dsh-send-hover-color, var(--dsh-send-color, var(--dsw-alias-label-on-color)));
+  }
+}
+
+.send:disabled:not([data-sending]) {
+  color: var(--dsh-send-disabled-color, var(--dsh-send-color, var(--dsw-alias-label-on-color)));
+  opacity: var(--dsh-send-disabled-opacity, 0.4);
+}
+
 /* Sending: the message waits for the Host to accept it. The circle keeps its
    full fill rather than the disabled fade, and an arc turns where the arrow was. */
 .primary[data-sending]:disabled {

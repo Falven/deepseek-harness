@@ -24,6 +24,7 @@ import {
   setProfileVersionExemption, validatePluginVersionExemption, PROFILE_COMPATIBILITY_FILENAME,
   getDshRuntimeVersion, ResolutionRestartRequired,
   assertBundlePlatform, UnsupportedBundlePlatformError,
+  ProfileReloadDeferred,
 } from '@deepseek-ai/dsh-app-boot'
 import { OPTIONAL_BUNDLES, OFFICIAL_ON_DEMAND_CATALOG, PROTECTED_PLUGINS } from '@deepseek-ai/dsh-official-bundles'
 import type {} from '@deepseek-ai/dsh-hmr'
@@ -1154,7 +1155,15 @@ export class PluginManager extends TypertRemoteService {
    */
   @Remote
   removeBundle(name: string): Promise<ChangeResult> {
+    return this.removeBundleChange(name)
+  }
+
+  private removeBundleChange(name: string, expectedState?: string): Promise<ChangeResult> {
     return this.change(async (result) => {
+      // The profile lock is held here: a later edit owns any state that differs from our saved deselection.
+      if (expectedState !== undefined && this.diskState() !== expectedState) {
+        throw new Error(`Deferred removal of "${name}" cancelled because the profile changed`)
+      }
       const installed = await this.configure(async () => {
         const bundle = (await this.listBundles()).find(item => item.name === name)
         if (bundle === undefined || !bundle.removable) throw new ManagementFailure('not-removable')
@@ -1166,7 +1175,21 @@ export class PluginManager extends TypertRemoteService {
         const contributions = bundle.error === undefined ? this.bundleRows(name) : []
         if (bundle.enabled) {
           await this.selectBundle(name, false)
-          Object.assign(result, await this.reload())
+          try {
+            Object.assign(result, await this.reload())
+          } catch (error) {
+            if (error instanceof ProfileReloadDeferred) {
+              const deselectedState = this.diskState()
+              const pending = error.completion.then(async () => {
+                const removal = await this.removeBundleChange(name, deselectedState)
+                if (removal.application === 'failed') throw new Error(removal.error?.diagnostic ?? 'Deferred package removal failed')
+              })
+              this.packageOperations.add(pending)
+              void pending.catch((failure: unknown) => { this.ownerContext.logger.error(failure) })
+                .finally(() => { this.packageOperations.delete(pending) })
+            }
+            throw error
+          }
         }
         if ([...this.ctx.loader.entries()].some(entry => entry.fiber?.uid != null
           && contributions.some(row => row.id === entry.options.id && row.name === entry.options.name))) {
@@ -1395,7 +1418,10 @@ export class PluginManager extends TypertRemoteService {
           // A reload that waits for a restart leaves the change saved but not applied.
           else if (result.application === 'applied' && result.restartReason !== undefined) result.application = 'restart-required'
         } catch (error) {
-          if (error instanceof InstallCancelledError) {
+          if (error instanceof ProfileReloadDeferred) {
+            result.application = 'restart-required'
+            result.warnings = [...result.warnings ?? [], error.message]
+          } else if (error instanceof InstallCancelledError) {
             result.application = 'cancelled'
           } else {
             result.application = 'failed'

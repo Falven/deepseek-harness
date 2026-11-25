@@ -17,7 +17,7 @@ import type {
   ChatViewSlotProps, CommandNode, CompactionSummaryNode, ContextMessageNode, ConversationNode,
   LegacyConversationSlice, ModelRetryNode, StartedToolCall, SteeringMessageNode,
   ToolCallBlock, ToolResultNode, TurnErrorNode, TurnMaxTokensNode,
-  TranscriptViewMode, UserContentInput, UserMessageNode,
+  TranscriptViewMode, UserContentInput, UserMessageHeaderOwnerProps, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
   SessionListState, SessionSnapshot,
@@ -468,6 +468,7 @@ function makeHarness(
   const usePerformanceUsage = bindSnapshotSelector(performanceUsage)
   const useOriginRenderer = bindSnapshotSelector(originRenderer)
   let nodeSlotOverride: NodeRenderer | undefined
+  let userHeaderOverride: ((owner: UserMessageHeaderOwnerProps) => React.ReactNode) | undefined
   let imageSlotOverride: ImageRenderer | undefined
   const renderImages = (name: string, owner: object, options?: { fallback?: React.ReactNode }) => {
     if ((name !== 'conversation.chat.user.images' && name !== 'conversation.chat.message.images') || !isImageOwner(owner)) {
@@ -488,6 +489,9 @@ function makeHarness(
     fallback?: React.ReactNode
     hookContext?: unknown
   }) => {
+    if (key === 'conversation.chat.user.header') {
+      return userHeaderOverride?.(owner as UserMessageHeaderOwnerProps) ?? null
+    }
     if (key === 'conversation.chat.node') {
       return renderNodeSlot(key, owner as RoutedChatNodeOwner, opts as Parameters<NodeRenderer>[2])
     }
@@ -626,6 +630,7 @@ function makeHarness(
     setCollapseTiming: (timing: CollapseTiming) => { collapseTiming.set(timing) },
     setFoldedReplies: (replies: FoldedReplies) => { foldedReplies.set(replies) },
     setNodeRenderer: (renderer: NodeRenderer) => { nodeSlotOverride = renderer },
+    setUserHeaderRenderer: (renderer: (owner: UserMessageHeaderOwnerProps) => React.ReactNode) => { userHeaderOverride = renderer },
     setImageRenderer: (renderer: ImageRenderer) => { imageSlotOverride = renderer },
     setOriginRenderer: (renderer: UserChainRenderer | undefined) => { originRenderer.set({ renderer }) },
   }
@@ -889,6 +894,23 @@ describe('ChatView', () => {
     // Transcript updates do not re-render the aside.
     act(() => { h.setSession({ running: true }) })
     expect(h.asideRenders.count).toBe(1)
+  })
+
+
+  it('renders the declared user header beside saved and pending bubbles', () => {
+    const saved = { ...user(1, 'saved message'), source: { kind: 'user', rpcId: 'saved-req' } as never }
+    const h = makeHarness({ nodes: [saved] }, { pendingSubmissions: [{
+      requestId: 'pending-req' as never, placement: 'transcript',
+      time: 2_000, text: 'pending message', attachments: [],
+    }] })
+    h.setUserHeaderRenderer(({ source, requestId }) => (
+      <span>{(source as { rpcId?: string } | undefined)?.rpcId ?? requestId}</span>
+    ))
+    const view = render(<h.ChatView {...h.props} />)
+    const savedHeader = view.getByText('saved-req')
+    const pendingHeader = view.getByText('pending-req')
+    expect(savedHeader.nextElementSibling?.contains(view.getByText('saved message'))).toBe(true)
+    expect(pendingHeader.nextElementSibling?.contains(view.getByText('pending message'))).toBe(true)
   })
 
   it('renders only referenced Nodes without deleting unreferenced Node data', () => {

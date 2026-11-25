@@ -1,6 +1,6 @@
 /** Slot-owned tab information derived from framework-bound store and navigation hooks. */
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { findTabPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { KeyedSnapshotSelectorHook, PropsStore, SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
@@ -30,15 +30,17 @@ export const tabInfoFactory: SlotHookFactory<'sidebar.right.pane.tab', UseSideba
   const { sessionId } = standard
   const { tabId, title, fullscreen, active, signal, actions, useStore, useTabNavigation, shortcuts } = context
   return function useTabInfo() {
+    const previous = useRef<ReturnType<UseSidebarRightTabInfo>>(undefined)
     const layout = useStore(state => state.bySession[sessionId]?.layout)
     const navigation = useTabNavigation(tabId)
     return useMemo(() => {
+      if (signal.aborted && previous.current) return { ...previous.current, tab: { ...previous.current.tab, visible: false } }
       const tab = layout?.tabs[tabId]
       if (layout === undefined || tab === undefined || navigation === undefined) {
         throw new Error(`sidebarRight: tab "${tabId}" is not committed in session "${sessionId}"`)
       }
       const pane = findTabPane(layout, tabId)
-      return {
+      const info = {
         sidebar: { expanded: layout.expanded, fullscreen },
         panel: { id: pane.id, isFloating: pane.host === 'float' },
         tab: {
@@ -50,6 +52,8 @@ export const tabInfoFactory: SlotHookFactory<'sidebar.right.pane.tab', UseSideba
           refreshShortcut: shortcuts.find(row => row.id === 'page.refresh'),
         },
       }
+      previous.current = info
+      return info
     }, [layout, navigation, tabId, title, fullscreen, active, signal, actions, shortcuts])
   }
 }

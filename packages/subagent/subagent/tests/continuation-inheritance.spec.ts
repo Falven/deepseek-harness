@@ -30,6 +30,12 @@ import { TestSessionQuery } from './test-session-query.ts'
 import { loadStoredSession } from './persistence-helpers.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'continuable-origin': { kind: 'continuable-origin'; caller: string }
+  }
+}
+
 type Script = ConstructorParameters<typeof MockAdapter>[0]
 
 const roots: string[] = []
@@ -89,6 +95,30 @@ function foldedApprovalPolicy(ctx: Context, id: SessionId, events: readonly Sess
 }
 
 describe('continuable policy inheritance', () => {
+  it('keeps an explicit host source through asynchronous child resume', { timeout: 20_000 }, async () => {
+    const { ctx, parent } = await setup([textResponse('child done'), textResponse('continued')])
+    const started = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'parent' })
+    await waitNoActivation(ctx, started.childId)
+    const creating = Promise.withResolvers<undefined>()
+    const held = Promise.withResolvers<undefined>()
+    ctx.on('agent/created', async ({ agent }) => {
+      if (agent.id !== started.childId) return
+      creating.resolve(undefined)
+      await held.promise
+    })
+    const prompt = ctx.subagents['deliverHostPrompt'](started.childId, [{ type: 'text', text: 'continue please' }], {
+      delivery: 'queue', source: { kind: 'continuable-origin', caller: 'dispatch' }, signal: new AbortController().signal,
+    })
+    await creating.promise
+    held.resolve(undefined)
+    await prompt
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(loaded.events.find(event =>
+      event.type === 'user/message' && event.data.source.kind === 'continuable-origin',
+    )).toMatchObject({ data: { source: { caller: 'dispatch' } } })
+  })
+
   it.each(['auto', 'danger-full-access'] as const)(
     'persists the delegated %s identity across cold resume without reading the parent again',
     { timeout: 20_000 },

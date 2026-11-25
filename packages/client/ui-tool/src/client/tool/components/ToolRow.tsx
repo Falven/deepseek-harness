@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useMemo, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   CodeBlock, DiffBlock, DisclosureRow, IconInspectOutlineRegular, ReadBlock, SearchBlock,
@@ -27,9 +27,10 @@ import type { WebCardModelProps } from '../models/web-card-model.ts'
 import { AskQuestionCard } from './AskQuestionCard.tsx'
 import { ToolDetails, type ToolDetailsModel } from './ToolDetails.tsx'
 import { ExitCodeBadge } from './ExitCodeBadge.tsx'
+import type { ToolCallCommonProps } from '../../contract/slots.ts'
 import css from './ToolRow.module.css'
 
-export interface ToolRowProps {
+export interface ToolRowProps extends Pick<ToolCallCommonProps, 'commandActivity'> {
   /** Subscribe here, where the row owns its expanded body. */
   useDisclosure: UseDisclosure
   t: TranslateNS<'conversation'>
@@ -192,6 +193,7 @@ export const ToolRow = memo(function ToolRow({
   href,
   inspect,
   useDisclosure,
+  commandActivity,
 }: ToolRowProps) {
   const { expanded, toggle: toggleExpand } = useDisclosure()
   const terminalLabels = useMemo(() => terminalBlockLabels(t), [t])
@@ -216,6 +218,10 @@ export const ToolRow = memo(function ToolRow({
   const card = askQuestionBody ?? terminalBody ?? diffBody ?? readBody ?? imageBody ?? searchBody ?? webBody ?? detailsBody
   const expandable = state !== 'preparing' && (inputRaw !== null || outputText !== null || card !== null)
   const open = expanded && expandable
+  const live = open && state === 'running' && terminalBody !== null ? commandActivity : undefined
+  const { watchJobs, observeJob, jobId } = live ?? {}
+  useEffect(() => watchJobs?.(), [watchJobs])
+  useEffect(() => jobId === undefined ? undefined : observeJob?.(jobId), [observeJob, jobId])
   const bodyText = useMemo(
     () => open && card === null && inputRaw !== null ? formatToolBody(variant, inputRaw) : null,
     [card, inputRaw, open, variant],
@@ -337,6 +343,8 @@ export const ToolRow = memo(function ToolRow({
           ? (
             <TerminalBlock
               {...terminalBody.card}
+              output={live?.observation?.text ?? terminalBody.card.output}
+              cwd={live === undefined ? terminalBody.card.cwd : live.cwd}
               maxLines={Infinity}
               labels={terminalLabels}
               className={css.terminalBody}
@@ -440,6 +448,8 @@ export const ToolRow = memo(function ToolRow({
                           )}
                         </>
                       )}
+      {live?.observation?.gapBefore && <div>{t('terminal.outputGap')}</div>}
+      {live?.observation?.error !== undefined && <div role="status">{t('terminal.outputError', { error: live.observation.error })}</div>}
       {inspect !== undefined && (
         <button
           type="button"
@@ -454,7 +464,7 @@ export const ToolRow = memo(function ToolRow({
   ) : undefined, [
     open, detailsBody, askQuestionBody, terminalBody, terminalLabels, diffBody, diffLabels, readBody, readLabels,
     imageBody, renderSlot, loadImage, searchBody, searchLabels, webBody, webLabels, inspect, t, onOpenFile,
-    variant, bodyText, cardBody, outputText, state,
+    variant, bodyText, cardBody, outputText, state, live,
   ])
   return (
     <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}>

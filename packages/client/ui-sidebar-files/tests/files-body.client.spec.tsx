@@ -421,8 +421,6 @@ describe('failureLine', () => {
 
   it('names each directory failure', () => {
     expect(failureLine(t, new RemoteError('workspace-file/not-found', 'x', { path: 'p' }))).toBe(zh['error.notFound'])
-    expect(failureLine(t, new RemoteError('workspace-file/outside-workspace', 'x', { path: 'p' })))
-      .toBe(zh['error.outsideWorkspace'])
     expect(failureLine(t, new RemoteError('workspace-file/not-directory', 'x', { path: 'p', kind: 'file' })))
       .toBe(zh['error.notDirectory'])
   })

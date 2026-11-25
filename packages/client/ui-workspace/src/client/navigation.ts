@@ -522,12 +522,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   private clearMain(): void {
-    const previous = this.mainReference
-    this.mainReference = undefined
-    this.selection.set({})
-    this.recentViews.show(undefined)
-    previous?.release()
-    this.ctx.layout.selectPanel(null)
+    this.ctx.layout.withPanelChange(null, () => {
+      const previous = this.mainReference
+      this.mainReference = undefined
+      this.selection.set({})
+      this.recentViews.show(undefined)
+      previous?.release()
+      this.ctx.layout.selectPanel(null)
+    })
   }
 
   private replaceMain(
@@ -536,6 +538,13 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     panel: 'reveal' | 'preserve',
     beforeOpen?: (sessionId: SessionId) => void,
   ): void {
+    if (panel === 'reveal') {
+      this.ctx.layout.withPanelChange(null, () => {
+        this.replaceMain(target, signal, 'preserve', beforeOpen)
+        if (!signal.aborted) this.ctx.layout.selectPanel(null)
+      })
+      return
+    }
     signal.throwIfAborted()
     const reference = this.sessions.retain(target, { source: 'mainView', facets: { conversation: true } })
     try {
@@ -561,7 +570,6 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     // Both main references are held here, so the previous Session moves to the recent views without a gap.
     this.recentViews.show(reference.sessionId)
     previous?.release()
-    if (panel === 'reveal') this.ctx.layout.selectPanel(null)
   }
 
 }

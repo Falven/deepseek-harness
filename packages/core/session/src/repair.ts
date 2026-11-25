@@ -54,9 +54,21 @@ export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurn
   let openTurn: number | null = null
   let openStep: number | null = null
   const recovery = new ToolCallRecovery(cause)
+  const hostCalls = new Map<ToolCallId, { event: SessionEvent<'tool/host-call'>; dispatched: boolean }>()
   for (const event of events) {
     recovery.observe(event)
     switch (event.type) {
+      case 'tool/host-call':
+        hostCalls.set(event.data.callId, { event, dispatched: false })
+        break
+      case 'tool/host-dispatch': {
+        const call = hostCalls.get(event.data.callId)
+        if (call !== undefined) call.dispatched = true
+        break
+      }
+      case 'tool/host-result':
+        hostCalls.delete(event.data.callId)
+        break
       case 'turn/start':
         openTurn = event.data.turn
         openStep = null
@@ -77,10 +89,9 @@ export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurn
     }
   }
 
-  // Balanced log (no open tail turn): nothing to close. An open turn implies
-  // `events` is non-empty (its turn/start was logged), so `last` exists.
+  // Host calls may remain open after the last assistant turn has ended.
   const last = events.at(-1)
-  if (openTurn === null || last === undefined) return []
+  if (last === undefined) return []
 
   // The last real event supplies the seq base and the timestamp for the
   // synthetic closers (reusing the last timestamp keeps them deterministic and
@@ -88,6 +99,19 @@ export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurn
   const closers: SessionEvent[] = recovery.results()
   let seq = last.seq + closers.length + 1
   const time = last.time
+  for (const { event, dispatched } of hostCalls.values()) {
+    const unknown = dispatched || cause.kind === 'forked'
+    const reason = CLOSER_TEXT[cause.kind][dispatched ? 'started' : 'notStarted']
+    closers.push({
+      type: 'tool/host-result', seq: SessionSeq(seq++), time,
+      data: {
+        ...event.data, startedAt: event.time, status: unknown ? 'unknown' : 'not-dispatched',
+        content: [{ type: 'text', text: reason }], isError: true,
+        error: { name: unknown ? 'ToolOutcomeUnknownError' : 'ToolNotStartedError', code: unknown ? TOOL_OUTCOME_UNKNOWN : TOOL_NOT_STARTED, reason },
+      },
+    })
+  }
+  if (openTurn === null) return closers
 
   // Close an open step before its turn.
   if (openStep !== null) {

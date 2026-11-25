@@ -29,6 +29,9 @@ afterEach(async () => {
 async function setup(tasks: ScheduleTask[], options: Parameters<typeof harness>[0] = {}) {
   const test = await harness(options); tests.push(test)
   const agent = agentFor(test.ctx)
+  agent.followup.mockImplementation((message) => {
+    agent.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [message] })
+  })
   test.resolve.mockResolvedValue({ agent })
   const commit = vi.fn(async (task: ScheduleTask) => {
     const index = tasks.findIndex(current => current.record.id === task.record.id)
@@ -123,7 +126,11 @@ describe('Host Schedule timer', () => {
     expect(test.resolve).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(test.resolve).toHaveBeenCalledWith(ORIGINAL)
-    expect(test.followup).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'schedule' } }))
+    expect(test.followup).toHaveBeenCalledWith(expect.objectContaining({ source: {
+      kind: 'schedule', scheduleDelivery: [{
+        id: 'once', target: '2026-09-16T00:00:02.000Z', scheduledAt: '2026-09-16T00:00:02.000Z', prompt: 'Remember',
+      }],
+    } }))
     expect(test.flush).toHaveBeenCalled()
     expect(test.commit).toHaveBeenCalledTimes(1)
     expect(test.changed).toHaveBeenCalledTimes(1)
@@ -196,14 +203,14 @@ describe('Host Schedule timer', () => {
     })
     test.runtime.requestDrive()
     await vi.advanceTimersByTimeAsync(0)
-    // The batch's idle boundary requests the next drive, which sends the unpersisted member alone.
-    expect(test.followup).toHaveBeenCalledTimes(2)
-    expect(JSON.stringify(test.followup.mock.calls[1]![0].content)).not.toContain('Regular check')
+    // The idle boundary retries the unacknowledged task write without repeating the message.
+    expect(test.followup).toHaveBeenCalledTimes(1)
     expect(tasks[0]?.record.scheduledAt).toBe('2026-09-16T00:05:00.000Z')
     expect(tasks[1]).toEqual(task(daily))
     expect(vi.getTimerCount()).toBe(1)
     await vi.advanceTimersByTimeAsync(300_000)
-    expect(test.followup).toHaveBeenCalledTimes(4)
+    expect(test.followup).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(test.followup.mock.calls[1]![0].content)).not.toContain('Daily check')
     expect(tasks[0]?.record.scheduledAt).toBe('2026-09-16T00:10:00.000Z')
     expect(tasks[1]).toEqual(task(daily))
   })
@@ -389,7 +396,12 @@ describe('Schedule dispatch failures and concurrent changes', () => {
     expect(test.followup).toHaveBeenCalledTimes(1)
     expect(test.flush).toHaveBeenCalledTimes(1)
     const message = test.followup.mock.calls[0]![0]
-    expect(message.source).toEqual({ kind: 'schedule' })
+    expect(message.source).toEqual({ kind: 'schedule', scheduleDelivery: [
+      { id: daily.id, target: daily.scheduledAt, scheduledAt: '2026-09-15T23:59:00.000Z',
+        nextScheduledAt: '2026-09-16T23:59:00.000Z', prompt: daily.prompt },
+      { id: every.id, target: every.scheduledAt, scheduledAt: '2026-09-16T00:00:00.000Z',
+        nextScheduledAt: '2026-09-16T00:05:00.000Z', prompt: every.prompt },
+    ] })
     expect(JSON.stringify(message.content)).toContain('Daily check')
     expect(JSON.stringify(message.content)).toContain('Interval check')
     expect(records).toEqual([

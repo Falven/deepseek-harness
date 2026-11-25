@@ -18,8 +18,9 @@ function callName(call: ToolCallPhaseProps): string {
 
 /** One atomic call dispatched through the Tool-owned keyed slot. */
 const ToolCall = memo(function ToolCall({
-  renderSlot, callId, toolName, call, openFile, renderFallback, cwd, home, inspectCall, loadImage, useDisclosure, children,
-}: Pick<ToolTreeProps, 'renderSlot' | 'openFile' | 'cwd' | 'inspectCall' | 'loadImage' | 'useDisclosure'> & {
+  renderSlot, sessionId, callId, toolName, call, openFile, renderFallback, cwd, home, inspectCall, loadImage,
+  useDisclosure, useJobs, watchJobs, observeJob, t, children,
+}: Pick<ToolTreeProps, 'renderSlot' | 'sessionId' | 'openFile' | 'cwd' | 'inspectCall' | 'loadImage' | 'useDisclosure' | 'useJobs' | 'watchJobs' | 'observeJob' | 't'> & {
   renderFallback: (owner: ToolCallOwnerProps) => ReactNode
   callId: string
   toolName: string
@@ -27,6 +28,17 @@ const ToolCall = memo(function ToolCall({
   home?: string | undefined
   children?: ReactNode
 }) {
+  const job = useJobs(state => call.phase === 'start'
+    ? state.rows[sessionId]?.find(row => row.owner === sessionId && row.callId === callId)
+    : undefined)
+  const observation = useJobs(state => call.phase !== 'start' ? undefined
+    : job === undefined
+      ? Object.values(state.observed).find(row => row.owner === sessionId && row.callId === callId)
+      : state.observed[job.id])
+  const commandActivity = useMemo(() => call.phase === 'start'
+    ? { watchJobs, observeJob, jobId: observation?.jobId ?? job?.id,
+      cwd: observation?.cwd ?? job?.cwd, observation }
+    : undefined, [call.phase, job, observation, watchJobs, observeJob])
   const owner: ToolCallOwnerProps = useMemo(() => ({
     callId,
     toolName,
@@ -36,8 +48,9 @@ const ToolCall = memo(function ToolCall({
     home,
     loadImage,
     useDisclosure,
+    commandActivity,
     inspect: inspectCall === undefined ? undefined : () => { inspectCall(callId) },
-  }), [callId, toolName, call, openFile, cwd, home, loadImage, inspectCall, useDisclosure])
+  }), [callId, toolName, call, openFile, cwd, home, loadImage, inspectCall, useDisclosure, commandActivity])
   const autoReviewDenied = useMemo(
     () => call.phase === 'result' && toolRowModel(toolName, call.block).autoReviewDenial !== null,
     [toolName, call],
@@ -48,6 +61,10 @@ const ToolCall = memo(function ToolCall({
       data-chat-anchor-key={`call:${callId}`}
       data-chat-call-id={callId}
     >
+      {call.block.source && <div className={css.hostSource}>
+        {call.block.source.name}{call.block.source.actor ? ` · ${call.block.source.actor.name}` : ''}
+        {call.phase === 'result' && call.block.status && ` · ${t(`tool.hostStatus.${call.block.status}`)}`}
+      </div>}
       {autoReviewDenied
         ? renderFallback(owner)
         : renderSlot('tool.call.toolview', owner, {
@@ -60,8 +77,12 @@ const ToolCall = memo(function ToolCall({
 })
 
 const ToolCallBranch = memo(function ToolCallBranch({
-  renderSlot, block, cwd, home, openFile, renderFallback, inspectCall, loadImage, useDisclosure,
-}: Pick<ToolTreeProps, 'renderSlot' | 'cwd' | 'openFile' | 'inspectCall' | 'loadImage' | 'useDisclosure'> & {
+  renderSlot, sessionId, block, cwd, home, openFile, renderFallback,
+  inspectCall, loadImage, useDisclosure, useJobs, watchJobs, observeJob, t,
+}: Pick<ToolTreeProps,
+  'renderSlot' | 'sessionId' | 'cwd' | 'openFile' | 'inspectCall' | 'loadImage' |
+  'useDisclosure' | 'useJobs' | 'watchJobs' | 'observeJob' | 't'
+> & {
   renderFallback: (owner: ToolCallOwnerProps) => ReactNode
   block: ToolCallBlock
   home?: string | undefined
@@ -70,6 +91,7 @@ const ToolCallBranch = memo(function ToolCallBranch({
   return (
     <ToolCall
       renderSlot={renderSlot}
+      sessionId={sessionId}
       callId={call.block.callId}
       toolName={callName(call)}
       call={call}
@@ -79,6 +101,10 @@ const ToolCallBranch = memo(function ToolCallBranch({
       home={home}
       inspectCall={inspectCall}
       useDisclosure={useDisclosure}
+      t={t}
+      useJobs={useJobs}
+      watchJobs={watchJobs}
+      observeJob={observeJob}
       loadImage={loadImage}
     >
       {call.phase !== 'preparing' && call.block.subCalls.length > 0 ? (
@@ -87,6 +113,7 @@ const ToolCallBranch = memo(function ToolCallBranch({
             <ToolCallBranch
               key={child.callId}
               renderSlot={renderSlot}
+              sessionId={sessionId}
               block={child}
               cwd={cwd}
               home={home}
@@ -94,6 +121,10 @@ const ToolCallBranch = memo(function ToolCallBranch({
               renderFallback={renderFallback}
               inspectCall={inspectCall}
               useDisclosure={useDisclosure}
+              t={t}
+              useJobs={useJobs}
+              watchJobs={watchJobs}
+              observeJob={observeJob}
               loadImage={loadImage}
             />
           ))}
@@ -110,7 +141,8 @@ const ToolCallBranch = memo(function ToolCallBranch({
  * @returns the Tool call tree.
  */
 export function ToolCallTree({
-  renderSlot, node, cwd, openFile, inspectCall, loadImage, useDisclosure, useHostInfo, t, useContextMenu, sessionId, resolveFilePath,
+  renderSlot, node, cwd, openFile, inspectCall, loadImage, useDisclosure, useHostInfo, useJobs, watchJobs, observeJob,
+  t, useContextMenu, sessionId, resolveFilePath,
 }: ToolTreeProps) {
   const { getTriggerProps } = useContextMenu()
   const getFileTriggerProps = useCallback((path: string) => getTriggerProps(() => ({
@@ -122,6 +154,7 @@ export function ToolCallTree({
   return (
     <ToolCallBranch
       renderSlot={renderSlot}
+      sessionId={sessionId}
       block={node.data.root}
       cwd={cwd}
       home={home}
@@ -129,6 +162,10 @@ export function ToolCallTree({
       renderFallback={renderFallback}
       inspectCall={inspectCall}
       useDisclosure={useDisclosure}
+      t={t}
+      useJobs={useJobs}
+      watchJobs={watchJobs}
+      observeJob={observeJob}
       loadImage={loadImage}
     />
   )

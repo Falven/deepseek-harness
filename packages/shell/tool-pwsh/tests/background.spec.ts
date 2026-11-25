@@ -3,6 +3,7 @@ import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, type SessionId } from '@deepseek-ai/dsh-session'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session/types'
@@ -91,6 +92,7 @@ async function setup() {
   provideWorkingDirectoryFixture(ctx)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
+  await ctx.plugin(LocalFileSystem)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(AgentRegistry)
@@ -135,6 +137,7 @@ describe('background pwsh output', () => {
     const job = jobs.list()[0]
     expect(job).toBeDefined()
     expect(job!.kind).toBe('pwsh')
+    expect(job).toMatchObject({ callId: `pwsh-background-${callCounter}`, cwd: process.cwd() })
     expect(job!.output).toEqual({ total: 0, earliest: 0 })
 
     stdout.text = 'progress-line\n'
@@ -513,6 +516,7 @@ describe('foreground commands as jobs (pwsh)', () => {
     provideWorkingDirectoryFixture(ctx)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SystemPrompt)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(AgentRegistry)
@@ -553,6 +557,7 @@ describe('foreground commands as jobs (pwsh)', () => {
     provideWorkingDirectoryFixture(ctx)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SystemPrompt)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(AgentRegistry)

@@ -1,6 +1,6 @@
 /** Window holds and conservative idle reclamation for one terminal owner. */
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import type { SubprocessTerminalActivity } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessTerminalActivity, SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
 import type { TerminalRetentionFrame } from './types.ts'
 
 /** Validated Host timing policy for unattended terminal cleanup. */
@@ -24,13 +24,13 @@ export class TerminalRetention {
 
   /**
    * @param policy - deployment timing choices.
-   * @param inspect - fresh shell and owned-job observation.
+   * @param inspect - shell and owned-job observations, with fresh evidence required at the cleanup deadline.
    * @param terminate - mark the identity closed, await process quiescence, and remove its owner record.
    * @param failed - diagnostic sink for failed automatic cleanup.
    */
   constructor(
     private readonly policy: TerminalRetentionPolicy,
-    private readonly inspect: () => Promise<SubprocessTerminalActivity>,
+    private readonly inspect: SubprocessTerminalHandle['inspectActivity'],
     private readonly terminate: () => Promise<void>,
     private readonly failed: (error: unknown) => void,
   ) { this.schedule(0) }
@@ -114,8 +114,9 @@ export class TerminalRetention {
     if (this.observation !== undefined) return
     const epoch = this.epoch
     this.observation = (async () => {
+      const fresh = this.idle !== undefined && performance.now() - this.idle.since >= this.policy.unattendedTimeoutMs
       let activity: SubprocessTerminalActivity
-      try { activity = await this.inspect() }
+      try { activity = await this.inspect(fresh ? { fresh: true } : undefined) }
       catch (_activityUnavailable) { activity = { state: 'unknown', revision: 0 } }
       if (this.disposed || this.closing || this.holders.size > 0 || epoch !== this.epoch) return
       const now = performance.now()
@@ -123,7 +124,7 @@ export class TerminalRetention {
       if (this.idle?.revision !== activity.revision || now - this.idle.observedAt > this.policy.activityPollIntervalMs * 2) {
         this.idle = { since: now, observedAt: now, revision: activity.revision }
       } else this.idle.observedAt = now
-      if (now - this.idle.since >= this.policy.unattendedTimeoutMs) await this.close()
+      if (fresh && now - this.idle.since >= this.policy.unattendedTimeoutMs) await this.close()
     })().catch(this.failed).finally(() => {
       this.observation = undefined
       if (!this.closing) this.schedule(this.policy.activityPollIntervalMs)

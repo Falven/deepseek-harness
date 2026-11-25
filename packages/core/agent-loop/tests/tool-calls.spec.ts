@@ -29,13 +29,13 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-async function harness(adapter: MockAdapter, maxParallelToolCalls?: number, executorLimit?: number) {
+async function harness(adapter: MockAdapter, maxParallelToolCalls?: number, executorLimit?: number, tools = ToolRuntime) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt, { personaPrefix: '' })
-  await ctx.plugin(ToolRuntime)
+  await ctx.plugin(tools)
   let toolPipeline!: ToolExecutionPipeline
   await ctx.plugin({
     inject: ['tools'],
@@ -120,6 +120,37 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('tool-call scheduler: grouping and barriers', () => {
+  it('executes a model tool call with a separately evaluated Tools provider', async () => {
+    const provider: typeof import('@deepseek-ai/dsh-tools') = await import(
+      new URL('../../tools/src/index.ts?provider-copy', import.meta.url).href,
+    )
+    expect(provider.default).not.toBe(ToolRuntime)
+    const adapter = new MockAdapter([
+      multiCall([{ id: 'c1', name: 'echo', args: {} }]),
+      textResponse('done'),
+    ])
+    const ctx = await harness(adapter, undefined, undefined, provider.default)
+    try {
+      ctx.tools.register(defineContentToolFixture({
+        name: 'echo', description: 'echo', parameters: {},
+        async execute() { return [{ type: 'text', text: 'hello' }] },
+      }))
+      const agent = await ctx.agentLoop.create(brandString<SessionId>('separate-tools'), { provider: 'mock', model: 'mock' })
+      const idle = waitForIdle(ctx, agent)
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+      await idle
+
+      expect(events(agent).findLast(event => event.type === 'turn/end')).toMatchObject({
+        data: { reason: { kind: 'completed' } },
+      })
+      expect(events(agent).filter(event => event.type === 'tool/result')).toMatchObject([{
+        data: { message: { source: { kind: 'tool', callId: brandString<ToolCallId>('c1') }, content: [{ type: 'text', text: 'hello' }] } },
+      }])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('runs parallel-safe siblings concurrently (all start before any completes)', async () => {
     const adapter = new MockAdapter([
       multiCall([{ id: 'c1', name: 'p', args: { id: '1' } }, { id: 'c2', name: 'p', args: { id: '2' } }, { id: 'c3', name: 'p', args: { id: '3' } }]),

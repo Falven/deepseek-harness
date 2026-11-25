@@ -549,9 +549,15 @@ describe('PiAiAdapter provider routing', () => {
 })
 
 describe('provider profile lifecycle', () => {
-  it('keeps adapter helpers off the package root', () => {
-    for (const helper of [
+  it('exports host provider composition seams while keeping stream helpers private', () => {
+    for (const seam of [
+      'PiAiAdapter',
+      'ProviderProfileSchema',
       'resolveProfiles',
+      'authContextFrom',
+      'credentialStoreFrom',
+    ]) expect(LlmPiAi).toHaveProperty(seam)
+    for (const helper of [
       'toPiContext',
       'toPiReplayState',
       'toPiAssistant',
@@ -678,7 +684,7 @@ describe('provider profile lifecycle', () => {
       .resolves.toMatchObject({ reasoning: { defaultEffort: brandString<ReasoningEffortId>('off') } })
   })
 
-  it('serves declared reasoning efforts to selectors and honours the profile default', async () => {
+  it('serves declared reasoning efforts and per-model defaults to selectors', async () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(LlmPiAi, {
@@ -688,12 +694,21 @@ describe('provider profile lifecycle', () => {
           api: 'openai-completions',
           baseURL: 'https://acme.test/v1',
           reasoning: 'high',
-          models: [{
-            id: 'acme-think',
-            contextWindow: 65_536,
-            maxTokens: 4096,
-            reasoningEfforts: { off: null, low: 'low', high: 'high' },
-          }],
+          models: [
+            {
+              id: 'acme-think',
+              contextWindow: 65_536,
+              maxTokens: 4096,
+              reasoningEfforts: { off: null, low: 'low', high: 'high' },
+            },
+            {
+              id: 'acme-low',
+              contextWindow: 65_536,
+              maxTokens: 4096,
+              reasoningEfforts: { off: null, low: 'low', high: 'high' },
+              defaultEffort: 'low',
+            },
+          ],
         },
       },
     })
@@ -709,6 +724,9 @@ describe('provider profile lifecycle', () => {
         ],
         defaultEffort: brandString<ReasoningEffortId>('high'),
       },
+    })
+    await expect(ctx.llm.resolveModelInfo('acme-gateway', 'acme-low')).resolves.toMatchObject({
+      reasoning: { defaultEffort: brandString<ReasoningEffortId>('low') },
     })
   })
 

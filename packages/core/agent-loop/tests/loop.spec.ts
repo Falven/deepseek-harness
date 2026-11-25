@@ -1044,12 +1044,22 @@ describe('agent loop', () => {
     const adapter = new MockAdapter([textResponse('first'), textResponse('second')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(brandString<SessionId>('a1'), { provider: 'mock', model: 'mock' })
+    const prepared = Promise.withResolvers<undefined>()
+    const releasePreparation = Promise.withResolvers<undefined>()
+    ctx.on('agent/prepare-step', async ({ agent: proposed, turn, step }) => {
+      if (proposed === agent && turn === 1 && step === 1) {
+        prepared.resolve(undefined)
+        await releasePreparation.promise
+      }
+    })
 
     const idle = waitForIdle(ctx, agent)
     agent.steer(createUserMessage({ content: [{ type: 'text', text: 'first idle steer' }], source: { kind: 'user' } }))
     expect(agent.status).toBe('running')
+    await prepared.promise
     expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(1)
     agent.steer(createUserMessage({ content: [{ type: 'text', text: 'second idle steer' }], source: { kind: 'user' } }))
+    releasePreparation.resolve(undefined)
     await idle
 
     expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(1)

@@ -30,30 +30,41 @@ export class McpGeneration {
    * @param timeoutMs - remaining operation budget; undefined leaves the SDK default.
    * @param fetch - optional OAuth request wrapper bound to the active grant.
    * @param authProvider - optional passive OAuth callbacks, tracked through actual settlement.
+   * @param factory - optional transport constructor using the generation's cancellation signal.
    * @returns completion of negotiation, or cancellation/deadline rejection.
    */
-  connect(config: Config, timeoutMs: number | undefined, fetch?: FetchLike, authProvider?: Required<AuthProvider>): Promise<void> {
-    this.lifetime.signal.throwIfAborted()
-    const transport = this.transport = createTransport(config, fetch, authProvider === undefined ? undefined : {
-      token: () => this.run(() => authProvider.token()),
-      onUnauthorized: context => this.run(() => authProvider.onUnauthorized(context)),
-    })
-    const close = transport.close.bind(transport)
-    let closing: Promise<void> | undefined
-    transport.close = () => closing ??= close()
-    const start = transport.start.bind(transport)
-    transport.start = () => {
-      this.lifetime.signal.throwIfAborted()
-      this.started = true
-      return start()
-    }
-    transport.onclose = () => {
-      this.closeObserved = true
-      this.closed.resolve()
-    }
+  connect(
+    config: Config, timeoutMs: number | undefined, fetch?: FetchLike, authProvider?: Required<AuthProvider>,
+    factory?: (signal: AbortSignal) => Transport | Promise<Transport>,
+  ): Promise<void> {
+    const startedAt = Date.now()
     return this.run(async (signal) => {
+      const transport = factory === undefined
+        ? createTransport(config, fetch, authProvider === undefined ? undefined : {
+          token: () => this.run(() => authProvider.token()),
+          onUnauthorized: context => this.run(() => authProvider.onUnauthorized(context)),
+        })
+        : await factory(signal)
+      const close = transport.close.bind(transport)
+      let closing: Promise<void> | undefined
+      transport.close = async () => closing ??= close()
+      this.transport = transport
+      if (signal.aborted) {
+        await transport.close()
+        signal.throwIfAborted()
+      }
+      const start = transport.start.bind(transport)
+      transport.start = () => {
+        signal.throwIfAborted()
+        this.started = true
+        return start()
+      }
+      transport.onclose = () => {
+        this.closeObserved = true
+        this.closed.resolve()
+      }
       await this.client.connect(transport, { signal,
-        ...timeoutMs === undefined ? {} : { timeout: Math.max(1, timeoutMs) },
+        ...timeoutMs === undefined ? {} : { timeout: Math.max(1, timeoutMs - (Date.now() - startedAt)) },
       })
       this.assertOpen()
     }, timeoutMs)
@@ -101,12 +112,17 @@ export class McpGeneration {
     this.lifetime.abort(reason)
     let cleanupError: string | undefined
     const work = async (): Promise<void> => {
-      try {
-        await (this.client.transport === undefined ? this.transport?.close() : this.client.close())
-      } catch (error) {
-        cleanupError = this.diagnostic(error)
+      const close = async (): Promise<void> => {
+        try {
+          await (this.client.transport === undefined ? this.transport?.close() : this.client.close())
+        } catch (error) {
+          cleanupError ??= this.diagnostic(error)
+        }
       }
+      const transport = this.transport
+      await close()
       await Promise.allSettled([...this.pending])
+      if (this.transport !== transport) await close()
       if (this.started && !this.closeObserved) await this.closed.promise
     }
     try {

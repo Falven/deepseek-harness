@@ -453,6 +453,13 @@ Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/wo
 Host Remote file reads and workspace directory observations over the composed filesystem.
 
 ```ts cordis-catalog
+/** Apply the Session root hook for host-side callers of file operations.
+ * @param sessionId - Session whose files are addressed.
+ * @param workspaceRoot - the Session header's workspace root.
+ * @returns the scope with its deployment-resolved root.
+ */
+resolveScope(sessionId: SessionId, workspaceRoot: string): Promise<WorkspaceFileScope>
+
 /**
  * Resolve the scope other Host services use to open the same `session/<id>/<path>` addresses:
  * a live Session's sandbox workspace root, else a stored Session's cached directory, else its header directory.
@@ -492,7 +499,7 @@ scopeOf(sessionId: SessionId, signal?: AbortSignal): Promise<WorkspaceFileScope 
 @Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>
 
 /**
- * List the direct children of one directory inside the Session's workspace.
+ * List the direct children of one directory readable by the Session's filesystem.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
  * @param path - workspace path, absolute or relative to the workspace root.
  * @param signal - caller cancellation.
@@ -518,12 +525,12 @@ scopeOf(sessionId: SessionId, signal?: AbortSignal): Promise<WorkspaceFileScope 
 
 /**
  * Watch one file or a directory's direct entries in the Session's filesystem.
- * Files use the backend's read authority; directories remain workspace-scoped.
+ * Files and directories use the backend's read authority.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
- * @param path - target path; the Host determines its type and confines directories to the workspace.
+ * @param path - target path, absolute or relative to the workspace root.
  * @param signal - generation cancellation.
  * @returns `ready` once the target watch is active, then current metadata for queued and live invalidations.
- * @throws RemoteError when watching is unavailable or a directory is outside the workspace.
+ * @throws RemoteError when watching is unavailable.
  */
 @Remote({ mode: 'stream' }) changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>
 ```
@@ -558,9 +565,9 @@ async create(path: string, title?: string): Promise<Workspace>
  * that registration permanently disables automatic creation.
  * @param resolveDirectory - resolve the absolute directory; called only for
  * eligible creation, inside the registry mutation queue. Missing directories
- * are created recursively before registration, and the initial title is the
- * requested directory's own final segment — not the canonical one, so a
- * symlink at that path does not retitle the Workspace after its target.
+ * are created recursively before registration. The default-title provider
+ * can override the requested directory's own final segment — not the
+ * canonical one, so a symlink does not retitle the Workspace after its target.
  * After resolution, caller cancellation does not roll back creation or registration.
  * @returns the initialized Workspace, or undefined when automatic creation is ineligible.
  */
@@ -668,6 +675,24 @@ Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/w
 
 ### `workspace/*` events
 
+<a id="workspacedefault-title--bail"></a>
+
+#### `workspace/default-title` — bail
+
+Supply the initial display title for a Workspace directory. Explicit and saved titles take precedence over this default.
+
+```ts cordis-catalog
+/**
+ * Supply the initial display title for a Workspace directory.
+ * Explicit and saved titles take precedence over this default.
+ * @param path - the directory being registered.
+ * @mode bail
+ */
+'workspace/default-title'(path: string): string | undefined
+```
+
+Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
 <a id="workspacesession-activity--waterfall"></a>
 
 #### `workspace/session-activity` — waterfall
@@ -753,4 +778,42 @@ Cancel or settle archive follow-up work before making a Session available again.
 ```
 
 Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
+<a id="workspacevalidate-directory--parallel"></a>
+
+#### `workspace/validate-directory` — parallel
+
+Validate or prepare a directory before a new Workspace is registered.
+
+```ts cordis-catalog
+/**
+ * Validate or prepare a directory before a new Workspace is registered.
+ * @param path - directory requested for the new Workspace.
+ * @mode parallel
+ */
+'workspace/validate-directory'(path: string): Promise<void> | void
+```
+
+Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/workspace-controller/src/index.ts)
+
+<a id="workspace-files-events"></a>
+
+### `workspace-files/*` events
+
+<a id="workspace-filesresolve-workspace-root--waterfall"></a>
+
+#### `workspace-files/resolve-workspace-root` — waterfall
+
+Allow a deployment to resolve an authorized Session's files in its own execution world.
+
+```ts cordis-catalog
+/**
+ * Allow a deployment to resolve an authorized Session's files in its own execution world.
+ * @param scope - authorized Session identity and its recorded workspace root.
+ * @mode waterfall
+ */
+'workspace-files/resolve-workspace-root'( scope: WorkspaceFileScope, next: () => Promise<string>, ): Promise<string>
+```
+
+Source: [`packages/api/workspace-files/src/index.ts`](../../packages/api/workspace-files/src/index.ts)
 <!-- END GENERATED cordis-surface -->

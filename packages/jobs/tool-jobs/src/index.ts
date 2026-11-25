@@ -13,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { boundContextSummary, createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed, MessageId } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
 import { TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import { defineTool, ToolArgsError } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
@@ -27,6 +27,21 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'tool-jobs': { kind: 'tool-jobs' } & ContextFormed
+  }
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Intercept a settled job's exact notice before its owner receives it.
+     * Call `next()` synchronously to continue ordinary follow-up or injection.
+     * @param input - the destination, settled job, and notice message.
+     * @mode waterfall
+     */
+    'tool-jobs/completion-message'(
+      input: { owner: Agent; job: JobView; message: UserMessage },
+      next: () => void,
+    ): void
   }
 }
 
@@ -370,17 +385,18 @@ export function apply(ctx: Context, config: Config): void {
    * @param event - the settlement to announce.
    */
   const deliverSettlement = (event: SettledEvent): void => {
-    if (event.cause === 'teardown' || event.job.owner === undefined) return
+    const sessionId = event.job.owner
+    if (event.cause === 'teardown' || sessionId === undefined) return
     // The destination is the agent registered for the owner session now. An
     // owned job needed the agent registry to start, so the registry is only
     // absent here when it left before settlement — and then no inbox is left.
-    const owner = ctx.get('agents')?.get(event.job.owner)
+    const owner = ctx.get('agents')?.get(sessionId)
     if (owner === undefined) return
     // A stream longer than the bound cannot fit, so the read stays in the
     // registry. A read whose result makes the notice too long is held for
     // `job_output`, whose result the tool pipeline bounds and spills.
     const held = inlineBytes > 0 && event.job.output.total <= inlineBytes
-      ? readBody(ctx.jobs.read(event.job.id, event.job.owner)).text
+      ? readBody(ctx.jobs.read(event.job.id, sessionId)).text
       : undefined
     const inline = held === undefined ? undefined : inlineCompletionNotice(event.job, held, inlineBytes)
     const message = createUserMessage({
@@ -394,22 +410,24 @@ export function apply(ctx: Context, config: Config): void {
         summary: completionSummary(event.job),
       },
     })
-    pending.set(event.job.id, {
-      owner: event.job.owner, messageId: message.id, inline: inline !== undefined, ...held === undefined ? {} : { held },
+    ctx.waterfall('tool-jobs/completion-message', { owner, job: event.job, message }, () => {
+      pending.set(event.job.id, {
+        owner: sessionId, messageId: message.id, inline: inline !== undefined, ...held === undefined ? {} : { held },
+      })
+      if (delivery === 'wakeup' && owner.status === 'idle') {
+        if (wakeBudget === undefined) {
+          owner.followup(message)
+          return
+        }
+        const spent = spentWakes.get(owner) ?? 0
+        if (spent < wakeBudget) {
+          spentWakes.set(owner, spent + 1)
+          owner.followup(message)
+          return
+        }
+      }
+      owner.inject(message)
     })
-    if (delivery === 'wakeup' && owner.status === 'idle') {
-      if (wakeBudget === undefined) {
-        owner.followup(message)
-        return
-      }
-      const spent = spentWakes.get(owner) ?? 0
-      if (spent < wakeBudget) {
-        spentWakes.set(owner, spent + 1)
-        owner.followup(message)
-        return
-      }
-    }
-    owner.inject(message)
   }
 
   ctx.jobs.events.subscribe({ owners: 'scope' }, (event) => {

@@ -282,7 +282,7 @@ function Level({ path, tree }: { path: string; tree: TreeContext }): ReactNode {
   // it is kept while those are unchanged; the rows draw this render's entries.
   const sortKey = JSON.stringify(level.map(node => [node.kind === 'directory', node.entry.name]))
   const order = useMemo(() => orderOf(level), [sortKey])
-  if (state?.loading === true) return <li className={css.note} data-files-row="loading">{t('loading')}</li>
+  if (state?.loading === true) return <li className={css.note} data-files-row="loading" data-sidebar-loading={path === tree.input.root} role="status" aria-atomic="true">{t('loading')}</li>
   return (
     <>
       {state?.failure !== undefined && <li className={css.note} data-files-row="failed">{state.failure}</li>}

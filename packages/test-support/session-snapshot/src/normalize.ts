@@ -335,8 +335,8 @@ export function normalizeStdout(
 /**
  * Normalize a session JSONL log into a stable expected output: the header line's
  * volatile fields (`createdAt`, `id`, `cwd`) are zeroed/scrubbed; event,
- * historical packed-row, embedded Assistant-stream, goal lifecycle, and
- * catalog child-creation clocks are zeroed; and all volatile strings are
+ * historical packed-row, embedded Assistant-stream, goal lifecycle, Host Tool
+ * start, and catalog child-creation clocks are zeroed; and all volatile strings are
  * scrubbed. Projected inputs remain
  * projected. Packed `data.dt` gaps are normalized even when the projected row
  * omits its `time0` anchor.
@@ -412,6 +412,10 @@ export function normalizeSessionLog(
     if (record.type === 'hook/result' && record.data !== null && typeof record.data === 'object') {
       const data = record.data as Record<string, unknown>
       if ('durationMs' in data) data.durationMs = 0
+    }
+    if (record.type === 'tool/host-result' && record.data !== null && typeof record.data === 'object') {
+      const data = record.data as Record<string, unknown>
+      if ('startedAt' in data) data.startedAt = 0
     }
     normalizeFeedbackClocks(record)
     normalizeTimelineClocks(record)

@@ -28,6 +28,7 @@ export interface ProviderDirectoryEntry {
   readonly displayName: string
   readonly settingsNs: string
   readonly settingsPath: readonly string[]
+  readonly editor?: 'pi-ai'
   readonly active: boolean
   readonly declared?: boolean
   readonly defaultBaseURL?: string
@@ -53,6 +54,7 @@ export function joinProviderDirectory(
     displayName: entry.displayName,
     settingsNs: entry.settingsNs,
     settingsPath: [...entry.settingsPath],
+    ...entry.editor === undefined ? {} : { editor: entry.editor },
     active: active.has(entry.provider),
     ...entry.declared === undefined ? {} : { declared: entry.declared },
     ...entry.defaultBaseURL === undefined ? {} : { defaultBaseURL: entry.defaultBaseURL },
@@ -133,14 +135,16 @@ export function deriveKeyRef(provider: string): string {
  * both come from the same `Config`.
  * @param namespace - the namespace view whose schema declares the profile shape.
  * @param schema - settings schema operations.
+ * @param path - a profile path in that namespace.
  * @returns the protocol identifiers, or an empty list when the schema has none.
  */
 export function protocolChoices(
   namespace: SettingsNamespaceView | undefined,
   schema: SettingsSchemaOperations,
+  path: readonly string[] = ['providers', PROBE_ROUTE],
 ): string[] {
   if (namespace === undefined) return []
-  const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), ['providers', PROBE_ROUTE, 'api'])
+  const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), [...path, 'api'])
   const list = (node as { type?: string; list?: readonly { value?: unknown }[] } | undefined)
   if (list?.type !== 'union' || list.list === undefined) return []
   return list.list.map(entry => entry.value).filter((value): value is string => typeof value === 'string')
@@ -153,15 +157,16 @@ export function protocolChoices(
  * adapter accepts in `reasoningEfforts` come from the same `Config`.
  * @param namespace - the namespace view whose schema declares the profile shape.
  * @param schema - settings schema operations.
+ * @param path - a profile path in that namespace.
  * @returns the levels in the schema's escalation order, or an empty list when the schema has none.
  */
 export function reasoningLevelChoices(
   namespace: SettingsNamespaceView | undefined,
   schema: SettingsSchemaOperations,
+  path: readonly string[] = ['providers', PROBE_ROUTE],
 ): string[] {
   if (namespace === undefined) return []
-  const path = ['providers', PROBE_ROUTE, 'models', '0', 'reasoningEfforts']
-  const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), path)
+  const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), [...path, 'models', '0', 'reasoningEfforts'])
   // `false | { [level]: value }`: the dict branch's key schema lists the levels.
   const branches = (node as { list?: readonly { type?: string; sKey?: unknown }[] } | undefined)?.list ?? []
   const keys = branches.find(branch => branch.type === 'dict')?.sKey as { list?: readonly { value?: unknown }[] } | undefined

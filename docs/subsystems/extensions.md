@@ -384,4 +384,24 @@ A pending Client activation request left the answerable state.
 ```
 
 Source: [`packages/extensions/cordis-host-runner/src/types.ts`](../../packages/extensions/cordis-host-runner/src/types.ts)
+
+<a id="cordisrun-source--waterfall"></a>
+
+#### `cordis/run-source` — waterfall
+
+Capture the activation's source before approval or delayed completion.
+
+```ts cordis-catalog
+/**
+ * Capture the activation's source before approval or delayed completion.
+ * @param request - The requesting Agent.
+ * @param next - The native continuation source.
+ * @mode waterfall
+ */
+'cordis/run-source'(request: { agent: Agent }, next: () => MessageSource): MessageSource
+```
+
+Types: [Agent](core.md) · [MessageSource](llm-streaming.md)
+
+Source: [`packages/extensions/cordis-host-runner/src/index.ts`](../../packages/extensions/cordis-host-runner/src/index.ts)
 <!-- END GENERATED cordis-surface -->

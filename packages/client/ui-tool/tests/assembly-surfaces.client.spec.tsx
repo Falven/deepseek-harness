@@ -1,7 +1,7 @@
 import { syncedConfig } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { apply as applyMenus, inject as injectMenus } from '@deepseek-ai/dsh-client-ui-context-menu/client'
-import { toolSessionEvents } from './tool-fixtures.client.ts'
+import { mountToolJobs, toolSessionEvents } from './tool-fixtures.client.ts'
 // @vitest-environment jsdom
 /** Tool assembly acceptance through the real ui-conversation host. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -119,6 +119,7 @@ async function bench(nodes: ToolResultNode[]) {
   await runtime.root.declare(LAYOUT_CHILDREN, AppRoot)
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation }, syncedConfig({ busyEnter: 'queue', maxConcurrentFileUploads: 2 }))
   await runtime.mount({ inject: [...injectChat], apply: applyChat })
+  await mountToolJobs(runtime)
   await runtime.mount({ inject: [...injectTool], apply: applyTool })
   return runtime
 }

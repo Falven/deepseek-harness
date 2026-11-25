@@ -19,7 +19,7 @@ import type { LexicalEditor } from 'lexical'
 import type { QuoteSummary } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   CommandClaim, ConsumeTokenRequest, DraftAttachmentId, DraftInitializationOptions, DraftInitializationResult,
-  InputActions, InputEffect, InputNotice, InputState, InputTriggerController, PickOutcome,
+  InputActions, InputEffect, InputNotice, InputState, InputTriggerController, PickOutcome, PreparedPromptContent,
   SessionInput, SubmitAttempt, SubmitAttachment, SubmitOutcome,
 } from '../contract/input.ts'
 import type {
@@ -63,6 +63,8 @@ export interface SessionInputDeps {
    * order (the empty-draft accelerated-Enter gesture); absent = unsupported.
    */
   steerQueue?: (() => void) | undefined
+  /** Capture local context before asynchronous command adjudication. */
+  prepareContent?: (() => PreparedPromptContent) | undefined
   /**
    * The plain-message sink (send choreography / materialize fork — the hub owns it).
    * `accept` settles the message as accepted at once; the sink calls it when
@@ -75,6 +77,7 @@ export interface SessionInputDeps {
     mode: InputSubmitMode,
     signal: AbortSignal,
     accept: () => void,
+    prepareContent?: PreparedPromptContent,
   ): Promise<SubmitOutcome>
   /** Read the Session facts whose removal and subagent mode gate quote and reference insertion; absent permits both. */
   session?: (() => Pick<SessionSnapshot, 'removed' | 'subagent'>) | undefined
@@ -197,6 +200,7 @@ export class SessionInputShell implements SessionInput {
   }
 
   private readonly core = new SubmitMachine()
+  private readonly contentPreparations = new WeakMap<SubmitAttempt, PreparedPromptContent>()
   private readonly draftEditor: DraftEditorRuntime
   private get projection(): EditorProjection {
     return this.draftEditor.projection
@@ -780,6 +784,8 @@ export class SessionInputShell implements SessionInput {
         return
       }
       case 'adjudicate': {
+        const prepareContent = this.deps.prepareContent?.()
+        if (prepareContent !== undefined) this.contentPreparations.set(fx.attempt, prepareContent)
         this.adjudicate(fx.attempt, fx.draft)
         return
       }
@@ -826,6 +832,7 @@ export class SessionInputShell implements SessionInput {
     draft: string,
     mode: InputSubmitMode,
   ): void {
+    const prepareContent = this.contentPreparations.get(attempt) ?? this.deps.prepareContent?.()
     this.notifySubmission(attempt.submission)
     const { occurrences, quotes, attachmentIds } = attempt
     const inputTriggers = this.deps.inputTriggers?.()
@@ -839,7 +846,9 @@ export class SessionInputShell implements SessionInput {
         this.settleSink(attempt, Promise.resolve({ kind: 'success' }))
         return
       }
-      this.settleSink(attempt, this.deps.defaultSink(text, attachmentIds, mode, attempt.signal, () => { this.acceptSink(attempt) }))
+      this.settleSink(attempt, this.deps.defaultSink(
+        text, attachmentIds, mode, attempt.signal, () => { this.acceptSink(attempt) }, prepareContent,
+      ))
     }
     if (!(prompt instanceof Promise)) { send(prompt); return }
     void prompt.then(send, (error: unknown) => { this.failSink(attempt, error) })

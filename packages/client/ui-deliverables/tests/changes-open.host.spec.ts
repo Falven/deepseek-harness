@@ -151,6 +151,19 @@ describe('changed files native open route', () => {
     expect(opener.mock.lastCall?.[0].path).toBe(await realpath(outside))
   })
 
+  it('uses the Session filesystem root hook for a listed file', async () => {
+    const { root, cwd, ctx, open, opener } = await fixture()
+    const remote = join(root, 'selected-session')
+    await mkdir(join(remote, 'src', 'lib'), { recursive: true })
+    await writeFile(join(remote, 'src', 'lib', 'a.ts'), 'selected Session')
+    ctx.on('workspace-files/resolve-workspace-root', async ({ workspaceRoot }) => {
+      expect(workspaceRoot).toBe(cwd)
+      return remote
+    })
+    expect((await open()).status).toBe(204)
+    expect(opener.mock.lastCall?.[0].path).toBe(await realpath(join(remote, 'src', 'lib', 'a.ts')))
+  })
+
   it.each(['', '?seq=9', '?sessionId=owner', '?sessionId=owner&seq=9', '?sessionId=owner&seq=9&index=-1', '?sessionId=owner&seq=9&index=1.5', '?sessionId=owner&seq=x'])(
     'rejects invalid coordinates before reading: %s', async (query) => {
       const { open, readEvent } = await fixture()

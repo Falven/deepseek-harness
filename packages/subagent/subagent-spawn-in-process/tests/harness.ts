@@ -8,6 +8,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
 import * as BashEnvPlugin from '@deepseek-ai/dsh-shell-env'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -38,6 +39,7 @@ export async function spawnHarness(workdir: string): Promise<Context> {
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(BashEnvPlugin)
   await ctx.plugin(LocalBashExecutor, { cwd: workdir, timeoutMs: 30_000 })
+  await ctx.plugin(LocalFileSystem, { cwd: workdir })
   await ctx.plugin(ToolBash)
   await ctx.plugin(JsonlSessionPersistence, { root: join(workdir, '.sessions') })
   await mountWorkingDirectoryFixture(ctx)

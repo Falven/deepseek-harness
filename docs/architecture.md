@@ -71,7 +71,7 @@ Electron starts the private Desktop Host in Electron Node mode. The Host invokes
 Events provide extension points in three domains.
 
 - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
-- **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+- **Agent events** (`agent/*`) observe or intercept a live `Agent`. The inbox emits `agent/inbox/admit` before insertion.
 - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
 
 Subagent Activations own runtime tree membership.
@@ -87,7 +87,9 @@ AgentLoop rolls back failed initialization and awaits serial `agent/created` bef
 A **step** is one model request plus the tools it calls. A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
 
 ```text
+agent/before-turn
 turn/start
+  agent/prepare-step
   claim next-step input plus one queued message
   snapshot Session model selection; assemble prompt sections + step-admitted tool schemas
   -> agent/pre-step; project runtime context at fallback

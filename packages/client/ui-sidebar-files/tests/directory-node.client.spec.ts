@@ -247,18 +247,23 @@ describe('DirectoryNode', () => {
     await stream.released.promise
   })
 
-  it('does not report a stream error whose release completes after node cancellation', async () => {
+  it.each(['release', 'fallback read'] as const)('does not report a stream error after cancellation during %s', async (phase) => {
     const { node, script, failed } = mount()
     const stream = await script.watches.forPath(ROOT)
     const release = stream.holdRelease()
     stream.fail(new Error('watch stopped during cancellation'))
     await stream.releasing.promise
+    if (phase === 'fallback read') {
+      release.resolve(undefined)
+      await script.waitForList(0)
+    }
     const closing = node.close()
     expect(stream.signal.aborted).toBe(true)
     release.resolve(undefined)
+    if (phase === 'fallback read') await script.settle({ ok: true, value: EMPTY })
     await closing
     expect(failed).not.toHaveBeenCalled()
-    expect(script.list).not.toHaveBeenCalled()
+    expect(script.list).toHaveBeenCalledTimes(phase === 'fallback read' ? 1 : 0)
   })
 
   it('lists after watch-unsupported and keeps manual refresh available without reporting a failed directory', async () => {

@@ -1255,7 +1255,7 @@ type CallSiteIndex = Map<ts.SignatureDeclaration | ts.JSDocSignature, ts.CallExp
  * must appear here — the prefilter drops non-members before any branch runs,
  * so a branch for an unlisted name is silently dead.
  */
-const EVENT_API_METHODS = new Set(['on', 'once', 'emit', 'parallel', 'serial', 'bail', 'waterfall', 'dispatch'])
+const EVENT_API_METHODS = new Set(['on', 'once', 'emit', 'parallel', 'serial', 'bail', 'waterfall', 'dispatch', 'prepare'])
 
 /**
  * Collect event dispatch/listener relations from real cross-file receiver types.
@@ -1401,7 +1401,8 @@ export class EventRelationCollector {
           }
         } else if (ts.isPropertyAccessExpression(node.expression) && EVENT_API_METHODS.has(node.expression.name.text)) {
           const receiverKind = this.receiverKind(node.expression.expression)
-          const method = node.expression.name.text
+          const property = node.expression.name.text
+          const method = receiverKind === 'agent-dispatch' && property === 'prepare' ? 'serial' : property
           if (receiverKind === 'events-service' && method === 'dispatch') {
             const argumentList = node.arguments[1]
             if (argumentList) {

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { Context, FiberState, Service, resolveConfig, type Fiber } from '@deepseek-ai/cordis'
+import { Context, FiberState, Service, ValidationError, resolveConfig, type Fiber } from '@deepseek-ai/cordis'
 import type z from '@deepseek-ai/schemastery'
 import { interpolate, type Entry } from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-config-editor'
@@ -388,7 +388,8 @@ export class SettingsForms extends Service {
     for (const path of paths) {
       if (path.length && !isVolatilePath(schema, path)) throw new Error(`Config field "${path.join('.')}" is not volatile`)
     }
-    await this.ownerContext.configEditor.edit(entry, (raw, inherited) => {
+    let containsSecrets = false
+    try { await this.ownerContext.configEditor.edit(entry, (raw, inherited) => {
       const descriptor = this.describe().find(row => row.ns === ns)
       if (descriptor === undefined) throw new Error(`Plugin entry "${ns}" is no longer configurable`)
       if (expected !== undefined && descriptor.revision !== expected) {
@@ -418,8 +419,16 @@ export class SettingsForms extends Service {
         }
         return result
       }
-      return mergeLayers(strip(raw, form), next) as Record<string, unknown>
-    })
+      const candidate = mergeLayers(strip(raw, form), next) as Record<string, unknown>
+      containsSecrets = redactSecrets(schema as z<never>, candidate).secrets.some(secret => secret.set)
+      return candidate
+    }) } catch (error) {
+      // A validator may print the entire rejected object, including secret siblings.
+      if (containsSecrets && error instanceof ValidationError) {
+        throw new ValidationError([{ message: `Check the configuration fields for plugin "${ns}"; secret values are withheld.` }])
+      }
+      throw error
+    }
     this.describe()
   }
 

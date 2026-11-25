@@ -122,11 +122,10 @@ export class DirectoryNode {
         if (!this.initialized || this.automatic) void this.refresh()
       }
     } catch (error) {
-      if (!this.signal.aborted) {
-        if (!this.initialized) await this.refresh()
-        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'workspace-file/watch-unsupported')) {
-          this.failed(this.path, error)
-        }
+      if (!this.signal.aborted && !this.initialized) await this.refresh()
+      if (!this.signal.aborted
+        && !(typeof error === 'object' && error !== null && 'code' in error && error.code === 'workspace-file/watch-unsupported')) {
+        this.failed(this.path, error)
       }
     }
   }

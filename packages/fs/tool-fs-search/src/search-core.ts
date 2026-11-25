@@ -1,14 +1,14 @@
 /**
  * Shared execution plumbing for the `glob` / `grep` search tools: the
- * package-owned `SEARCH_*` error vocabulary, one spawn helper that runs the
- * PACKAGED ripgrep binary (`@vscode/ripgrep`) with a plain argv vector and
+ * package-owned `SEARCH_*` error vocabulary, one spawn helper that runs
+ * ripgrep with a plain argv vector and
  * returns complete raw stdout, the best-effort formatted-result spill handoff,
  * and workdir-relative path display.
  *
  * Both tools execute as ordinary foreground spawns through `ctx.subprocess` —
  * never `ctx.shell`, never `ctx.shell.start()`, never a model-visible background
- * task. The ripgrep binary ships inside the npm package, so no system `rg`
- * install is required, and no shell layer exists between the argv vector and
+ * task. Local providers resolve the packaged binary; remote providers can
+ * resolve `rg` from their own PATH. No shell layer exists between argv and
  * ripgrep, so no shell quoting is involved. Raw `rg` stdout is an internal
  * transport detail: the tools request a per-run stdout capture budget from the
  * subprocess seam, parse only complete in-memory stdout within
@@ -19,14 +19,16 @@
  * @module @deepseek-ai/dsh-tool-fs-search/search-core
  */
 
-import { isAbsolute, relative, sep } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { spawnRipgrep } from '@deepseek-ai/dsh-util-ripgrep'
+import type {} from '@deepseek-ai/dsh-fs'
+import { resolveRgPath } from '@deepseek-ai/dsh-util-ripgrep'
 export { resolveRgPath } from '@deepseek-ai/dsh-util-ripgrep'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessExecutableNotFoundError } from '@deepseek-ai/dsh-subprocess'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 
@@ -97,7 +99,7 @@ export class SearchError extends HarnessError {
   }
 }
 
-/** The completed acquisition of one `rg` run: complete stdout plus the resolved workdir. */
+/** The completed acquisition of one `rg` run: complete stdout plus resolved display paths. */
 export interface RipgrepRun {
   /** Complete raw stdout retained by the subprocess seam within the requested cap. */
   stdout: string
@@ -105,6 +107,8 @@ export interface RipgrepRun {
   noMatches: boolean
   /** The resolved working directory the command ran in (the display-relativization base). */
   workdir: string
+  /** Search root in the same display coordinates as returned paths. */
+  root: string
 }
 
 /**
@@ -156,10 +160,9 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
 }
 
 /**
- * Run the packaged ripgrep binary with a plain argv vector and return its
- * complete raw stdout. The working directory is the calling agent's session
- * current directory when available, else
- * `process.cwd()`. `exec.signal` is forwarded so the cooperative tool timeout
+ * Run ripgrep with a plain argv vector and return its complete raw stdout.
+ * The filesystem provider resolves the Session directory and explicit search
+ * path into the subprocess execution world. `exec.signal` is forwarded so the cooperative tool timeout
  * (`@deepseek-ai/dsh-tool-call-timeout-policy`) and caller cancellation terminate the
  * process tree.
  *
@@ -182,14 +185,14 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  * `SEARCH_FAILED` with the original as `cause`; an abort already observed by
  * creation time becomes `SEARCH_ABORTED` instead.
  *
- * @param ctx - the plugin context; execution uses its `subprocess` service.
+ * @param ctx - the plugin context; path resolution uses `fs`, execution uses `subprocess`.
  * @param exec - the tool-execution context; supplies the owning Agent and the abort signal.
  * @param toolName - `glob` or `grep`, used in error messages.
  * @param argv - the ripgrep arguments (every model value an unquoted argv element; no shell layer exists).
  * @param rawOutputMaxBytes - cap on the complete raw stdout the tool will parse.
  * @param graceMs - the seam's terminate-escalation grace period.
  * @param stderrMaxBytes - cap on the retained stderr diagnostic tail.
- * @returns the complete stdout, the zero-result flag, and the resolved workdir.
+ * @returns the complete stdout, zero-result flag, resolved workdir, and display search root.
  */
 export async function runRipgrep(
   ctx: Context,
@@ -203,13 +206,32 @@ export async function runRipgrep(
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
-  const workdir = exec.agent === undefined
-    ? process.cwd()
+  const cwd = exec.agent === undefined
+    ? undefined
     : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
   let handle: SubprocessHandle
+  let workdir: string
+  let root = '.'
   try {
-    handle = await spawnRipgrep(ctx.subprocess, {
-      argv,
+    let executable: string
+    try {
+      executable = await ctx.subprocess.resolveExecutable(await resolveRgPath(), undefined, exec.signal)
+    } catch (error) {
+      if (!(error instanceof SubprocessExecutableNotFoundError)) throw error
+      executable = await ctx.subprocess.resolveExecutable('rg', undefined, exec.signal)
+    }
+    const options = { ...(cwd === undefined ? {} : { cwd }), signal: exec.signal }
+    workdir = ctx.fs.processPath(await ctx.fs.resolve('.', options))
+    const args = [...argv]
+    const pathIndex = args.length - 1
+    const requestedPath = args[pathIndex]
+    if (args[pathIndex - 1] === '--' && requestedPath !== undefined) {
+      const target = ctx.fs.processPath(await ctx.fs.resolve(requestedPath, options))
+      if (requestedPath === '-' || resolve(workdir, requestedPath) !== target) args[pathIndex] = target
+      root = toWorkdirRelative(target, workdir)
+    }
+    handle = ctx.subprocess.spawn({
+      argv: [executable, '--no-config', ...args],
       cwd: workdir,
       stdio: {
         stdin: 'ignore',
@@ -255,7 +277,7 @@ export async function runRipgrep(
     throw classifyRunFailure(toolName, outcome.exitCode, stderr.text, stderr.lossy)
   }
   const text = completeStdout(toolName, stdout, rawOutputMaxBytes)
-  return { stdout: text, noMatches: outcome.exitCode === 1, workdir }
+  return { stdout: text, noMatches: outcome.exitCode === 1, workdir, root }
 }
 
 /**

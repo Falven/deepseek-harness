@@ -51,7 +51,7 @@ export const InputBar = memo(function InputBar({
   useAccess,
   useProjection, sessionId, variant, occurrence, disabled: inert = false, blocked,
   workspacePickerOpen = false, onRequestWorkspace,
-  placeholder, accessory,
+  placeholder, accessory, inputPlaceholder,
 }: InputBarProps) {
   const input = useInput(s => s)
   const notice = useNotices(s => s)
@@ -432,7 +432,7 @@ export const InputBar = memo(function InputBar({
   // (the gate never consults plan mode), so the actionable hint wins.
     : canSteerQueue
       ? t('placeholder.steerQueue')
-      : planActive ? t('placeholder.plan') : t('placeholder.default'))
+      : planActive ? t('placeholder.plan') : (inputPlaceholder?.() ?? t('placeholder.default')))
 
   return (
     <div className={clsx(css.root, variant === 'hero' && css.hero)}>
@@ -550,14 +550,15 @@ export const InputBar = memo(function InputBar({
                 <button
                   type="button"
                   className={css.primary}
+                  data-composer-action="stop"
                   aria-label={t('input.stop')}
                   disabled={stopAction === undefined}
                   onMouseDown={keepFocus}
                   onClick={stopAction}
                 >
-                  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+                  {renderSlot('conversation.input.stop.icon', {}, { fallback: <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
                     <rect x="3" y="3" width="10" height="10" rx="3" fill="currentColor" />
-                  </svg>
+                  </svg> })}
                 </button>
               </Tooltip>
             )}
@@ -565,7 +566,8 @@ export const InputBar = memo(function InputBar({
               <Tooltip label={primaryStops ? t('input.stop') : primaryLabel} shortcutKeys={primaryStops ? stopKeys : undefined} side="top" delayMs={500} disabled={primaryDisabled} portal>
                 <button
                   type="button"
-                  className={css.primary}
+                  className={clsx(css.primary, !primaryStops && !primaryRetries && css.send)}
+                  data-composer-action={primaryStops ? 'stop' : primaryRetries ? 'retry' : 'send'}
                   aria-label={primaryLabel}
                   aria-busy={sending}
                   data-sending={sending ? '' : undefined}
@@ -574,9 +576,9 @@ export const InputBar = memo(function InputBar({
                   onClick={onPrimary}
                 >
                   {primaryStops ? (
-                    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+                    renderSlot('conversation.input.stop.icon', {}, { fallback: <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
                       <rect x="3" y="3" width="10" height="10" rx="3" fill="currentColor" />
-                    </svg>
+                    </svg> })
                   ) : sending ? (
                     <svg className={css.sendingSpinner} viewBox="0 0 16 16" width="16" height="16" aria-hidden>
                       <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" />
@@ -585,9 +587,11 @@ export const InputBar = memo(function InputBar({
                   ) : primaryRetries ? (
                     <IconTriangleRightFillRegular size={16} className={css.continueIcon} />
                   ) : (
-                    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
-                      <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
-                    </svg>
+                    renderSlot('conversation.input.send.icon', {}, { fallback: (
+                      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+                        <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
+                      </svg>
+                    ) })
                   )}
                 </button>
               </Tooltip>

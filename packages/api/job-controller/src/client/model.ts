@@ -16,7 +16,7 @@ import type { JobFollowFrame } from '../types.ts'
 const RENDER_TAIL_LIMIT = 128 * 1024
 
 /** One observed job's live view state. */
-export interface ObservedJob {
+export interface ObservedJob extends Pick<JobView, 'owner' | 'callId' | 'cwd'> {
   readonly jobId: JobId
   /** Accumulated output tail, bounded to the render limit. */
   readonly text: string
@@ -132,6 +132,9 @@ export class ClientJobsModel implements JobsSource {
     const freshPastHead = (existing === undefined || existing.view.text === '') && frame.from > 0
     const view: ObservedJob = {
       jobId: id,
+      ...(frame.job.owner === undefined ? {} : { owner: frame.job.owner }),
+      ...(frame.job.callId === undefined ? {} : { callId: frame.job.callId }),
+      ...(frame.job.cwd === undefined ? {} : { cwd: frame.job.cwd }),
       text: existing?.view.text ?? '',
       gapBefore: (existing?.view.gapBefore ?? false) || frame.from < frame.job.output.earliest || freshPastHead,
       streaming: true,

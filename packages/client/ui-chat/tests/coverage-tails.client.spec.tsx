@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { AssistantMarkdown, type AssistantMarkdownProps } from '../src/client/chat/AssistantMarkdown.tsx'
 import { useDetailedPresentation } from './presentation-fixture.client.ts'
@@ -12,13 +13,14 @@ import { useSearchableHidden } from '../src/client/chat/searchable-hidden.ts'
 import { zh } from '../src/client/locale.ts'
 
 const t: AssistantMarkdownProps['t'] = makeTranslate(zh, commonZh)
+const SID = SessionId('coverage-tails')
 
 afterEach(cleanup)
 
 describe('tails', () => {
   it('enables quoting on the existing Markdown root without replacing streamed content', () => {
     const body = (textInteractionSource: boolean, streaming: boolean) => (
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation} t={t} loadImage={unusedImageLoader}
         blocks={[{ kind: 'text', text: 'source words' }]} textInteractionSource={textInteractionSource} streaming={streaming} />
     )
@@ -38,7 +40,7 @@ describe('tails', () => {
 
   it('AssistantMarkdown renders reasoning as a Think row and unknown blocks as JSON fallback', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[
@@ -54,7 +56,7 @@ describe('tails', () => {
     expect(view.getByText('thinking hard')).toBeTruthy()
     expect(view.getByText(/未知内容块/)).toBeTruthy()
     const stopped = render(
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'text', text: 'partial words' }]}
@@ -70,7 +72,7 @@ describe('tails', () => {
     // Tool heads are drawn by ChatView's tool groups; an empty root between
     // groups is layout noise (no text, no pulse, no interrupted marker).
     const empty = render(
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'tool-call', callId: 'c', name: 'todo_write', argsRaw: '{}' }]}
@@ -80,7 +82,7 @@ describe('tails', () => {
     )
     expect(empty.container.firstChild).toBeNull()
     const blank = render(
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t} blocks={[]} streaming={false} loadImage={unusedImageLoader} />,
     )

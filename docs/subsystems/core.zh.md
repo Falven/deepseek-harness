@@ -97,6 +97,17 @@ interface Agent {
   whenIdle(): Promise<void>
 
   /**
+   * Apply an external settings selection between complete model/tool steps.
+   * The returned promise settles after the change and its admission hooks;
+   * this never wakes an idle agent. Must not be awaited from an agent tool.
+   * @param change - the exact setting selected by the external producer.
+   * @param apply - synchronous mutation, returning whether execution settings changed.
+   * @param signal - cancels a waiting selection; admission already begun runs to settlement.
+   * @returns whether the selection changed settings.
+   */
+  changeSettings?(change: AgentSettingChange, apply: () => boolean, signal?: AbortSignal): Promise<boolean>
+
+  /**
    * Run one non-turn maintenance task from the true idle phase. The task starts
    * synchronously after claiming that phase; later waking input remains in the
    * inbox until the task settles, while public status stays `idle`.
@@ -298,23 +309,26 @@ interface Inbox {
    * Append one message to a pending list.
    * @param target - pending list to extend.
    * @param message - message to append.
+   * @param purpose - producer-declared role; defaults to instruction.
    */
-  append(target: InboxTarget, message: UserMessage): void
+  append(target: InboxTarget, message: UserMessage, purpose?: InputPurpose): void
 
   /**
    * Prepend one message to a pending list.
    * @param target - pending list to extend.
    * @param message - message to prepend.
+   * @param purpose - producer-declared role; defaults to instruction.
    */
-  prepend(target: InboxTarget, message: UserMessage): void
+  prepend(target: InboxTarget, message: UserMessage, purpose?: InputPurpose): void
 
   /**
    * Replace one pending message in place.
    * @param messageId - identity of the pending message to replace.
    * @param newMessage - replacement message.
+   * @param purpose - producer-declared role; defaults to instruction.
    * @returns whether the message was still pending.
    */
-  replace(messageId: MessageId, newMessage: UserMessage): boolean
+  replace(messageId: MessageId, newMessage: UserMessage, purpose?: InputPurpose): boolean
 
   /**
    * Remove one pending message.
@@ -329,6 +343,7 @@ interface Inbox {
    * @param start - splice position.
    * @param deleteCount - maximum number of messages to remove.
    * @param inserted - messages to insert at the resolved position.
+   * @param purpose - producer-declared role; defaults to instruction.
    * @returns messages removed by the splice.
    */
   splice(
@@ -336,6 +351,7 @@ interface Inbox {
     start: number,
     deleteCount: number,
     inserted: UserMessage[],
+    purpose?: InputPurpose,
   ): UserMessage[]
 }
 ```
@@ -882,6 +898,49 @@ Types: [Scoped](scope.zh.md)
 
 Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
 
+<a id="agentbefore-turn--serial"></a>
+
+#### `agent/before-turn` — serial
+
+Await host maintenance before opening a turn or claiming its inbox. Listeners must honor cancellation so disposal can release a parked driver.
+
+```ts cordis-catalog
+/**
+ * Await host maintenance before opening a turn or claiming its inbox.
+ * Listeners must honor cancellation so disposal can release a parked driver.
+ * @param payload - the Agent, proposed turn, and activity lifetime.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+ * @mode serial
+ */
+'agent/before-turn'(this: Scoped<Agent>, payload: { agent: Agent; turn: number; signal: AbortSignal }): void | Promise<void>
+```
+
+Types: [Scoped](scope.zh.md)
+
+Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
+<a id="agentcontrol--waterfall"></a>
+
+#### `agent/control` — waterfall
+
+Admit a settings change at a safe step boundary. The request's async context is retained, and no next step begins until this chain settles. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+
+```ts cordis-catalog
+/**
+ * Admit a settings change at a safe step boundary. The request's async
+ * context is retained, and no next step begins until this chain settles.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+ * @param payload - the Agent, selected setting, and native sequence at selection time.
+ * @param next - apply the selected setting, returning whether it changed.
+ * @mode waterfall
+ */
+'agent/control'(this: Scoped<Agent>, payload: { agent: Agent; change: AgentSettingChange; requestedAt: number }, next: () => Promise<boolean>): Promise<boolean>
+```
+
+Types: [Scoped](scope.zh.md)
+
+Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
 <a id="agentcreated--serial"></a>
 
 #### `agent/created` — serial
@@ -952,6 +1011,26 @@ A step or turn errored. The machine reports a failure here even when the error h
 ```
 
 Types: [Scoped](scope.zh.md)
+
+Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
+<a id="agentinboxadmit--emit"></a>
+
+#### `agent/inbox/admit` — emit
+
+Admit one producer-classified insertion before its durable splice. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+
+```ts cordis-catalog
+/**
+ * Admit one producer-classified insertion before its durable splice.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+ * @param payload - the Agent, exact message, and producer-declared role.
+ * @mode emit
+ */
+'agent/inbox/admit'(this: Scoped<Agent>, payload: { agent: Agent; message: UserMessage; purpose: InputPurpose }): void
+```
+
+Types: [Scoped](scope.zh.md) · [UserMessage](session.zh.md)
 
 Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
 
@@ -1041,6 +1120,28 @@ Reject a proposed step or replace the messages that enter it. Calling `next()` p
  * @mode waterfall
  */
 'agent/pre-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal; modelSelection: Readonly<ModelSelection> }, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
+```
+
+Types: [Scoped](scope.zh.md) · [UserMessage](session.zh.md)
+
+Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+
+<a id="agentprepare-step--serial"></a>
+
+#### `agent/prepare-step` — serial
+
+Prepare scoped services before claiming input and before collecting prompt providers. Listeners are awaited; failures retain pending input and close the turn without a model request. This hook does not replace admission in `agent/pre-step`.
+
+```ts cordis-catalog
+/**
+ * Prepare scoped services before claiming input and before collecting prompt
+ * providers. Listeners are awaited; failures retain pending input and close the turn without a model
+ * request. This hook does not replace admission in `agent/pre-step`.
+ * @param payload - the Agent, proposed messages, proposed turn and step, and turn cancellation signal.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+ * @mode serial
+ */
+'agent/prepare-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: readonly UserMessage[]; turn: number; step: number; signal: AbortSignal }): void | Promise<void>
 ```
 
 Types: [Scoped](scope.zh.md) · [UserMessage](session.zh.md)

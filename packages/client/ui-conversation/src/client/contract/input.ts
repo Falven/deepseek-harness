@@ -14,6 +14,10 @@ import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { QuoteSummary } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ArbitrateKey, ArbitrateOutcome, DraftQuote, Occurrence, ReferenceInsert, TokenSpan } from './draft-editor.ts'
 import type { InputSubmitMode, MessageSubmission } from './composer-submission.ts'
+import type { PromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
+
+/** Context captured at submission and applied after draft serialization. */
+export type PreparedPromptContent = (content: PromptContentPart[]) => Promise<PromptContentPart[]>
 
 /** Attachment payload passed to a claimed command submission. */
 export type SubmitAttachment =

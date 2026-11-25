@@ -35,6 +35,8 @@ export { DirectoryPickerController } from './directory-picker.ts'
 
 /** First-use directory policy for the Host account. */
 export interface Config {
+  /** Explicit first-use Workspace directory supplied by a distribution. */
+  defaultDirectory?: string
   /** Override the system Documents directory with a fully qualified path. */
   documentsDirectory?: string
   /** Maximum duration of the operating system's Documents lookup. */
@@ -49,6 +51,14 @@ declare module '@deepseek-ai/cordis' {
     /** Host Workspace business API and Remote namespace owner. */
     workspaceController: WorkspaceController
   }
+  interface Events {
+    /**
+     * Validate or prepare a directory before a new Workspace is registered.
+     * @param path - directory requested for the new Workspace.
+     * @mode parallel
+     */
+    'workspace/validate-directory'(path: string): Promise<void> | void
+  }
 }
 
 /** Host service backing the generated `ctx.remote.workspace` namespace. */
@@ -56,6 +66,7 @@ export class WorkspaceController extends TypertRemoteService {
   static inject = ['remoteAccess', 'typert', 'workspaceRegistry']
 
   static Config: z<Config, ResolvedConfig> = z.object({
+    defaultDirectory: z.string(),
     documentsDirectory: z.string(),
     documentsLookupTimeoutMs: z.natural().min(1).default(10_000),
   })
@@ -103,6 +114,7 @@ export class WorkspaceController extends TypertRemoteService {
   @Remote('initializeDefault')
   async initializeDefault(signal: AbortSignal): Promise<WorkspaceValue | undefined> {
     const workspace = await this.ctx.workspaceRegistry.initializeDefault(async () => {
+      if (this.config.defaultDirectory !== undefined) return this.config.defaultDirectory
       const timeout = AbortSignal.timeout(this.config.documentsLookupTimeoutMs)
       return await defaultWorkspaceDirectory(
         this.config.documentsDirectory, AbortSignal.any([signal, timeout]),

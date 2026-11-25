@@ -8,7 +8,7 @@ import { Context, FiberState, type Plugin } from '@deepseek-ai/cordis'
 import Loader, { ModuleLoader, type Entry } from '@deepseek-ai/cordis-plugin-loader'
 import {
   boot, initProfile, ProfileRuntimeResolution, readProfileManifest, readProfilePatches, reconcileProfilePatches, ResolutionRestartRequired,
-  type PluginPackages, type ProfileContext, type RuntimeResolution,
+  ProfileReloadDeferred, type PluginPackages, type ProfileContext, type ProfileReloadOutcome, type RuntimeResolution,
 } from '@deepseek-ai/dsh-app-boot'
 import Timer from '@deepseek-ai/cordis-plugin-timer'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -170,6 +170,57 @@ it('leaves plugins running when no loaded file changed', async () => {
   f.trace.length = 0
   await expect(f.reconcile()).resolves.toEqual({ warnings: [], pending: [] })
   expect(f.trace).toEqual([])
+})
+
+it('admits a profile reload before stopping a changed module', async () => {
+  const f = await fixture()
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  f.ctx.on('app-boot/profile-reload', async (_profile, next) => {
+    entered.resolve(undefined)
+    await release.promise
+    return next()
+  })
+  f.trace.length = 0
+  shared(f.dir, 2)
+  const operation = f.reconcile()
+  await entered.promise
+  expect(f.trace).toEqual([])
+  release.resolve(undefined)
+  await expect(operation).resolves.toEqual({ warnings: [], pending: [] })
+  expect(f.trace).toEqual(['stop:1', 'start:1:2:-'])
+})
+
+it('reenters the HMR queue when deferred admission later resumes', async () => {
+  const f = await fixture()
+  const completion = Promise.withResolvers<ProfileReloadOutcome>()
+  let resume: (() => Promise<ProfileReloadOutcome>) | undefined
+  f.ctx.on('app-boot/profile-reload', (_profile, next) => {
+    resume = next
+    throw new ProfileReloadDeferred(completion.promise)
+  })
+  shared(f.dir, 2)
+  await expect(f.reconcile()).rejects.toBeInstanceOf(ProfileReloadDeferred)
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const competing = f.ctx.hmr.runExclusive(async () => {
+    entered.resolve(undefined)
+    await release.promise
+  })
+  await entered.promise
+  f.trace.length = 0
+  if (resume === undefined) throw new Error('Deferred continuation missing')
+  const patch = readFileSync(f.profile.patchPath, 'utf8')
+  writeFileSync(f.profile.patchPath, 'invalid: [\n')
+  const operation = resume()
+  expect(f.trace).toEqual([])
+  writeFileSync(f.profile.patchPath, patch)
+  release.resolve(undefined)
+  await competing
+  const outcome = await operation
+  completion.resolve(outcome)
+  expect(outcome).toEqual({ warnings: [], pending: [] })
+  expect(f.trace).toEqual(['stop:1', 'start:1:2:-'])
 })
 
 it('keeps a module whose file gains a hard link', async () => {

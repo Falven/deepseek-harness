@@ -20,7 +20,7 @@ import { en as conversationEn, NS as CONVERSATION_NS, zh as conversationZh } fro
 import { apply as applyChat, inject as injectChat } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import { apply as applyTool, inject as injectTool } from '../src/client/apply.ts'
-import { toolChatSnapshot } from './tool-fixtures.client.ts'
+import { mountToolJobs, toolChatSnapshot } from './tool-fixtures.client.ts'
 
 const SID = 's1' as SessionId
 
@@ -148,6 +148,7 @@ async function bench(snapshot: ChatSnapshot) {
 
   await runtime.root.declare(ROOT_CHILDREN, AppRoot)
   await runtime.mount({ inject: [...injectChat], apply: applyChat })
+  await mountToolJobs(runtime)
   await runtime.mount({ inject: [...injectTool], apply: applyTool })
   return { runtime, layout, openWorkspacePath, sidebarRight }
 }

@@ -46,6 +46,7 @@ export function testAgent(ctx: Context, cwd: string, name = 'worktree-test'): Ag
     id, session, options: {}, status: 'idle', ctx: scope.ctx, model: unsupportedModel(),
     inbox: unsupportedInbox(),
     send() {}, followup() {}, steer() {}, inject() {}, cancel() {},
+    changeSettings: () => Promise.reject(new Error('settings changes are unsupported in this fixture')),
     whenIdle: async () => {}, runMaintenance: task => task(new AbortController().signal),
   }
   ctx.agents.register(agent)

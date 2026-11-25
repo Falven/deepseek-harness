@@ -1,4 +1,9 @@
 /** Shared Chat-slice and Session-event fixtures for Tool row tests. */
+import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
+import * as JobClient from '@deepseek-ai/dsh-api-job-controller/client'
+import type { JobRemote } from '../../../api/job-controller/src/client/service.ts'
 import type { SessionLiveEventEntry } from '@deepseek-ai/dsh-api-session-controller/client'
 import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import { isJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -123,4 +128,26 @@ export function toolSessionEvents(nodes: readonly ToolResultNode[]): readonly Se
     entries.push(resultEntry)
   }
   return entries
+}
+
+/** Mount the real Job Controller over the test-owned Remote stream boundary. */
+export async function mountToolJobs(runtime: SlotTestRuntime, job: JobRemote = {
+  list: async function* () {},
+  follow: async function* () {},
+  kill: async () => { throw new Error('unexpected job kill') },
+}) {
+  const connection: ConnectionHandle = {
+    interactions: 'none',
+    isLoopback: true,
+    generation: { getSnapshot: () => ({ id: 1, host: { home: '/home/fixture' } }), subscribe: () => () => {} },
+    state: { getSnapshot: () => 'connected' as const, subscribe: () => () => {} },
+    rpc: { call: () => Promise.reject(new Error('unexpected generic RPC call')) },
+    openWebSocket: () => { throw new Error('unexpected WebSocket') },
+    reconnect: () => {}, registerGenerationSource: () => () => {}, start: () => ({ stop: () => {} }),
+  }
+  Object.assign(runtime.remote, {
+    $stream: <Item>(options: RemoteStreamOptions<Item>) => new RemoteStream(connection, options),
+  })
+  runtime.remote.provideNamespaces({ job })
+  return runtime.mount(JobClient)
 }

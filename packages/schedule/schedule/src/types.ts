@@ -4,11 +4,18 @@
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { MessageId } from '@deepseek-ai/dsh-llm/types'
+import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import type { MessageId, MessageSource } from '@deepseek-ai/dsh-llm/types'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type {} from '@deepseek-ai/dsh-typert-protocol'
 // Type-only: the Workspace registry's archive-admission family map this plugin merges `schedule` into.
 import type {} from '@deepseek-ai/dsh-workspace/types'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'schedule': { kind: 'schedule' } & ContextFormed
+  }
+}
 
 /** Stable globally unique reminder identity. */
 export type ScheduleId = Branded<'ScheduleId'>
@@ -628,9 +635,69 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
+    /** Check delivery eligibility before restoring an existing target Session.
+     * Rejections stop automatic dispatch for these tasks until another schedule wake.
+     * @param request - Session awaiting delivery.
+     * @param next - delivery operation.
+     * @mode waterfall
+     */
+    'schedule/dispatch'(
+      request: { readonly sessionId: SessionId },
+      next: () => Promise<void>,
+    ): Promise<void>
+    /** Resolve durable delivery attribution before the task write commits.
+     * @param request - session and operation being attributed.
+     * @param next - remaining attribution providers, preserving stored attribution by default.
+     * @mode waterfall
+     */
+    'schedule/task-source'(
+      request: ScheduleTaskSourceRequest,
+      next: () => Promise<ScheduleTaskSource>,
+    ): Promise<ScheduleTaskSource>
+    /** Resolve the source attached to one reminder or attribution-compatible recurring batch.
+     * @param request - reserved for source providers.
+     * @param next - remaining source providers, using the saved source or Schedule producer by default.
+     * @mode waterfall
+     */
+    'schedule/delivery-source'(
+      request: Record<string, never>,
+      next: () => Promise<MessageSource>,
+    ): Promise<MessageSource>
     /** Durable task set changed; clients refetch global task and Session-active catalogs.
      * @mode emit
      */
     'schedule/changed'(): void
   }
+}
+
+/** Host attribution stored atomically with a native task, separate from its public rule. */
+export interface ScheduleTaskSource {
+  /** Immutable source snapshot reused when this task delivers. */
+  readonly source?: MessageSource
+  /** Equal keys permit recurring reminders to share one delivery message. */
+  readonly key?: string
+}
+
+/** Creation or substantive edit whose delivery attribution is being committed. */
+export interface ScheduleTaskSourceRequest {
+  /** Destination Session, or the acting Session for an unbound task when available. */
+  readonly sessionId?: SessionId
+  readonly operation: 'create' | 'update'
+}
+
+/** Inbox evidence used to finish a task acknowledgment without sending its reminder again. */
+export interface ScheduleDeliveredOccurrence {
+  readonly id: ScheduleId
+  /** Task target before this delivery advanced it. */
+  readonly target: string
+  /** Selected occurrence and immutable instruction included in this message. */
+  readonly scheduledAt: string
+  readonly prompt: string
+  /** Next target; omission ends the task after this delivery. */
+  readonly nextScheduledAt?: string
+}
+
+/** Delivery attribution with the task decisions committed in the same inbox message. */
+export type ScheduleMessageSource = MessageSource & {
+  readonly scheduleDelivery?: readonly ScheduleDeliveredOccurrence[]
 }

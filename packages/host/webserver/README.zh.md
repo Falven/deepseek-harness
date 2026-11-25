@@ -60,7 +60,7 @@ kind: "package-reference"
 
 WebServer 事件以发起它的 WebServer 为 Cordis subject。普通监听器仅接收相同 `webServer` isolation 中的事件；`{ global: true }` 明确跳过此过滤。请求处理、页面注入和入口 URL 收集均遵循此规则。自定义发起者也必须把自己的 WebServer 实例作为 subject 传入。
 
-`register(route)` 添加具名的 `exact`／`prefix` HTTP route，`registerUpgrade(route)` 为精确 pathname 添加 upgrade route，两者返回的 disposer 都会移除注册。同一张表内的重复路径会抛错——route 模式是组合层约定，冲突即配置错误。HTTP 匹配先在整张表中匹配精确 route，再匹配最长前缀，最后交给回退；upgrade 只做精确匹配，未命中连接直接关闭。
+`register(route)` 添加具名的 `exact`／`prefix` HTTP route，`registerUpgrade(route)` 添加精确或前缀 upgrade route，两者返回的 disposer 都会移除注册。同一张表内的重复路径会抛错——route 模式是组合层约定，冲突即配置错误。HTTP 匹配先在整张表中匹配精确 route，再匹配最长前缀，最后交给回退；upgrade 同样优先匹配精确路径，再匹配最长前缀，未命中时关闭连接。
 
 具名路由可以使用 `resource(request, peer?)` 代替 `handler`，将 Fetch `Request` 映射为 `Response`。准入后仅 `GET` 与 `HEAD` 可到达 resource；其他方法返回带 `Allow: GET, HEAD` 的405，不读取正文。resource 接收准入 Peer（若有）与客户端请求头；URL 将请求目标按占位 origin 解析，客户端 authority 保留在 `host` 中。响应按背压及与 handler 相同的 gzip 规则发送；`HEAD` 不发送正文，断开会中止 `request.signal` 并取消正文。`readResource(request, peer)` 使用显式准入的 Peer 在进程内分发，不检查 Cookie、Host 或 Origin，但解析出的 `deny` 返回403。它遵循 HTTP 匹配顺序，对 handler 或未认领回退返回404，对非 GET/HEAD 读取返回405；HEAD 读取不返回正文。
 
@@ -69,6 +69,8 @@ HTTP 请求在路由查找前经过 `webserver/request(request, response, next)`
 已准入的 upgrade 在已注册协议 handler 前经过 `webserver/upgrade(req, socket, head, peer, next)`。waterfall 携带已选定的 Peer，匿名准入可为 `undefined`；被拒绝的请求不会进入。监听器自行处理 Socket，或等待 `next()` 委派。WebServer 等待同步或异步协议 handler，并在中间件或 handler 拒绝时记录日志、销毁该 Socket。Provider 专属 Socket 限制与凭据清理属于监听器，不属于 WebServer 或 Gateway。
 
 `webserver/entry-url(baseUrl, entries)` 根据传入的服务器基地址同步收集完整入口 URL。监听器追加 `{ label, url, open }` 入口。WebApp 在就绪后触发该事件。WebApp 拥有按序打印与首个可自动打开入口的浏览器交接。该事件不认证请求，也不改变监听器或公告地址配置。
+
+当组合应用负责认证每个 HTTP 请求与 upgrade 时，设置 `externalAdmission: true`。在应用调用 `registerAdmission({ http, upgrade })` 之前，HTTP 返回 503，upgrade 连接关闭；唯一的准入提供方在具名路由和回退 handler 之前运行。释放提供方后恢复拒绝状态，重复注册会被拒绝。依赖插件可在激活时读取 `ctx.webServer.requiresExternalAdmission` 验证该闸门。
 
 ### 回退席位
 

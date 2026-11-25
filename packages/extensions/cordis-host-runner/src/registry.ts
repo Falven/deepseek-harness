@@ -3,6 +3,7 @@
  * @module @deepseek-ai/dsh-cordis-host-runner/registry
  */
 
+import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Fiber } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -16,6 +17,8 @@ export type DynamicCordisHandler = (args: unknown) => Promise<unknown>
 
 /** One live activation and everything its teardown owns. */
 export interface DynamicCordisRun {
+  /** Captured source for asynchronous continuation messages. */
+  source: MessageSource
   /** Exact activation identity. */
   pluginRunId: CordisDynamicPluginRunId
   /** Immutable package version being run. */
@@ -72,6 +75,8 @@ export interface DynamicCordisPlugin {
 
 /** One suspended model-driven activation. */
 export interface DynamicCordisPendingRequest {
+  /** Captured before a later approver answers this activation. */
+  source: MessageSource
   /** Session whose model requested this activation. */
   agentId: SessionId
   pluginId: CordisDynamicPluginId

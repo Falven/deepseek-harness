@@ -267,6 +267,13 @@ async history(request: ScheduleDeliveryHistoryRequest): Promise<ScheduleDelivery
  * @returns The updated task, the deletion outcome, or a non-mutating miss or conflict.
  */
 async edit( request: ScheduleEditRequest, actorSessionId?: SessionId, signal?: AbortSignal, ): Promise<ScheduleEditResult>
+
+/**
+ * Pause the active reminders targeting a Session before its Sandbox retires.
+ * @param sessionId - Session whose reminders must wait for an explicit edit.
+ * @returns once every selected task is durably paused.
+ */
+async pauseSession(sessionId: SessionId): Promise<void>
 ```
 
 Types: [SessionId](core.md)
@@ -292,6 +299,45 @@ Durable task set changed; clients refetch global task and Session-active catalog
 
 Source: [`packages/schedule/schedule/src/types.ts`](../../packages/schedule/schedule/src/types.ts)
 
+<a id="scheduledelivery-source--waterfall"></a>
+
+#### `schedule/delivery-source` — waterfall
+
+Resolve the source attached to one reminder or attribution-compatible recurring batch.
+
+```ts cordis-catalog
+/** Resolve the source attached to one reminder or attribution-compatible recurring batch.
+ * @param request - reserved for source providers.
+ * @param next - remaining source providers, using the saved source or Schedule producer by default.
+ * @mode waterfall
+ */
+'schedule/delivery-source'( request: Record<string, never>, next: () => Promise<MessageSource>, ): Promise<MessageSource>
+```
+
+Types: [MessageSource](llm-streaming.md)
+
+Source: [`packages/schedule/schedule/src/types.ts`](../../packages/schedule/schedule/src/types.ts)
+
+<a id="scheduledispatch--waterfall"></a>
+
+#### `schedule/dispatch` — waterfall
+
+Check delivery eligibility before restoring an existing target Session. Rejections stop automatic dispatch for these tasks until another schedule wake.
+
+```ts cordis-catalog
+/** Check delivery eligibility before restoring an existing target Session.
+ * Rejections stop automatic dispatch for these tasks until another schedule wake.
+ * @param request - Session awaiting delivery.
+ * @param next - delivery operation.
+ * @mode waterfall
+ */
+'schedule/dispatch'( request: { readonly sessionId: SessionId }, next: () => Promise<void>, ): Promise<void>
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/schedule/schedule/src/types.ts`](../../packages/schedule/schedule/src/types.ts)
+
 <a id="scheduleresolve-agent--waterfall"></a>
 
 #### `schedule/resolve-agent` — waterfall
@@ -311,4 +357,21 @@ Restore a reminder's Session through its embedding's owning controller. Call nex
 Types: [Agent](core.md) · [SessionId](core.md)
 
 Source: [`packages/schedule/schedule/src/index.ts`](../../packages/schedule/schedule/src/index.ts)
+
+<a id="scheduletask-source--waterfall"></a>
+
+#### `schedule/task-source` — waterfall
+
+Resolve durable delivery attribution before the task write commits.
+
+```ts cordis-catalog
+/** Resolve durable delivery attribution before the task write commits.
+ * @param request - session and operation being attributed.
+ * @param next - remaining attribution providers, preserving stored attribution by default.
+ * @mode waterfall
+ */
+'schedule/task-source'( request: ScheduleTaskSourceRequest, next: () => Promise<ScheduleTaskSource>, ): Promise<ScheduleTaskSource>
+```
+
+Source: [`packages/schedule/schedule/src/types.ts`](../../packages/schedule/schedule/src/types.ts)
 <!-- END GENERATED cordis-surface -->

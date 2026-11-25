@@ -48,6 +48,7 @@ export async function externalTestParent(ctx: Context, cwd?: string): Promise<Ag
     steer: (message) => { inbox.append('next-step', message) },
     inject: (message) => { inbox.append('next-step', message) },
     cancel: (_cause, options) => { if (!options?.keepInbox) inbox.clear() },
+    changeSettings: () => Promise.reject(new Error('settings changes are unsupported in this fixture')),
     whenIdle: () => Promise.resolve(),
     runMaintenance: task => task(new AbortController().signal),
   }

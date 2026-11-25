@@ -325,7 +325,7 @@ export function chatSnapshotFixture(input: {
     if ('turn' in node && typeof node.turn === 'number') turnNumbers.add(node.turn)
   }
   if (legacy.partial !== null) turnNumbers.add(legacy.partial.turn)
-  for (const call of legacy.runningCalls) turnNumbers.add(call.turn)
+  for (const call of legacy.runningCalls) if (call.turn !== null) turnNumbers.add(call.turn)
   const turns = new Map<number, TurnLocation>()
   const turnData = new Map<number, FixtureTurnDataStore>()
   for (const turn of [...turnNumbers].sort((left, right) => left - right)) {
@@ -397,7 +397,7 @@ export function chatSnapshotFixture(input: {
     })
   }
   for (const call of legacy.runningCalls) {
-    const turn = turns.get(call.turn)
+    const turn = call.turn === null ? undefined : turns.get(call.turn)
     nodes.push({
       key: `fixture:tool:${call.callId}`,
       id: call.callId,

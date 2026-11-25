@@ -74,6 +74,7 @@ function PanelRow({
         <button
           type="button"
           className={css.panelRow}
+          data-sidebar-panel={id}
           aria-label={label}
           aria-describedby={trailing}
           aria-current={active ? 'page' : undefined}
@@ -296,7 +297,7 @@ export function SidebarRoot({
       {/* macOS hiddenInset titlebar: the strip shares the row with the
           traffic lights and keeps the toggle at the sidebar's top-right. */}
       {darwinDesktop && <div className={css.topStrip} data-window-drag>{toggle}</div>}
-      <div className={css.logoRow} data-window-drag>
+      <div className={css.logoRow} data-window-drag data-sidebar-logo-row>
         {/* Expanded, the brand doubles as a New Session shortcut while the
             access snapshot allows `session/create` — except on
             macOS, where it stays part of the logo row's window-drag surface
@@ -328,11 +329,12 @@ export function SidebarRoot({
             </span>
           )
           return darwinDesktop || !canStartSession
-            ? <span className={clsx(css.brand, css.wide)}>{identity}</span>
+            ? <span className={clsx(css.brand, css.wide)} data-sidebar-brand>{identity}</span>
             : (
               <button
                 type="button"
                 className={clsx(css.brand, css.wide)}
+                data-sidebar-brand
                 aria-label={t('session.new.label')}
                 aria-keyshortcuts={newShortcut?.aria}
                 onClick={(event) => {
@@ -356,6 +358,7 @@ export function SidebarRoot({
                 <button
                   type="button"
                   className={css.newSession}
+                  data-sidebar-new-session
                   aria-label={t('session.new.label')}
                   aria-keyshortcuts={newShortcut?.aria}
                   onClick={openNewSession}

@@ -64,13 +64,11 @@ export class SidebarSessionView {
     const release = (): void => {
       if (!held) return
       held = false
-      signal.removeEventListener('abort', release)
       const count = this.tabs.get(tabId) as number
       if (count === 1) this.tabs.delete(tabId)
       else this.tabs.set(tabId, count - 1)
       this.onTabRelease(this)
     }
-    signal.addEventListener('abort', release, { once: true })
     return release
   }
 

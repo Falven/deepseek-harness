@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry/types'
+import type {} from '@deepseek-ai/dsh-api-workspace-files'
 import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-working-directory'
@@ -28,7 +29,7 @@ export class SessionSkillCatalog extends TypertRemoteService {
   /**
    * List the user-invocable skills visible to one Session composition.
    * @param request - Session identity whose cwd and preset select the catalog view.
-   * @param signal - caller lifetime carried by the Remote transport; admitted catalog reads retain their existing completion semantics.
+   * @param signal - cancellation for resolving live directories and discovering skills.
    * @returns user-invocable skill metadata without loading skill bodies.
    * @throws RemoteError when the Session cannot be inspected or no registry can serve it.
    */
@@ -75,7 +76,14 @@ export class SessionSkillCatalog extends TypertRemoteService {
     await using lease = live === undefined ? await this.scopeFor(agentPreset) : undefined
     const scope = live ?? lease?.key
     try {
-      const skills = (await skillRegistry.list({ cwd, scope })).filter(isUserInvocable)
+      const workspaceRoot = await this.ctx.waterfall(
+        'workspace-files/resolve-workspace-root',
+        { sessionId, workspaceRoot: cwd },
+        () => Promise.resolve(cwd),
+      )
+      const snapshot = await skillRegistry.snapshot({ cwd: workspaceRoot, scope, signal })
+      if (!snapshot.complete) throw new Error(`skill catalog discovery is incomplete${snapshot.reason ? `: ${snapshot.reason}` : ''}`)
+      const skills = snapshot.skills.filter(isUserInvocable)
       return {
         skills: skills.map(skill => ({
           name: skill.name,

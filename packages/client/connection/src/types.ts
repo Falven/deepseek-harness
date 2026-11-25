@@ -15,4 +15,6 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /** Allow the mandatory application gate to admit a Web request without a native credential. */
+  authMode?: 'launch-token' | 'external'
 }

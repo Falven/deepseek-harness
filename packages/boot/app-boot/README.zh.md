@@ -66,6 +66,8 @@ profile 导入插件前，DSH 会将其声明的 DSH 版本要求与 `getDshRunt
 
 启用的 `dsh-hmr` 插件会监视 profile manifest、两份用户 patch 文件与每个 `--patch` overlay 文件，重新读取按顺序排列的组合包层，并应用[重载失败策略](#startup-and-reload-failures)。[DSH HMR](../hmr/README.zh.md) 将这些重载与[插件管理器](../plugin-manager/README.zh.md)的配置写入串行化；包操作在其队列之外执行。启动器不安装 HMR 或监视器；HMR 被禁用或不存在时，更改需要重启；例外是 Config Editor 保存时会应用所有 patch 与 overlay 文件的当前内容。
 
+Host 可以在 HMR 重新组合 profile 或 Config Editor 应用已变化的 patch 前处理 `app-boot/profile-reload` waterfall。其 `next()` 返回警告、待处理模块及重启原因。Host 若已保存编辑但推迟激活，会抛出带有完成 promise 的 `ProfileReloadDeferred`；未变化的直接 patch 重载会跳过准入事件。 Host 通过 `ProfileContext.hostPatches` 提供计算出的 patch 条目，在文件 overlay 之后应用。
+
 插入条目的插件名可以是绝对文件系统路径、文件 URL 或包标识符。patch 加载会把 `insert` 条目及其嵌套分组中的绝对路径以及相对于 patch 文件的 `./` 或 `../` 路径转换为文件 URL；对已有条目名称的断言及替换用的 `config` 值保持原样。
 
 挂载 profile 条目前，`dsh` launcher 会从安装依赖图与有序 bundle 依赖图计算一份不可变的 runtime resolution。普通 Node、打包可执行文件与 Electron Host 等所有 profile 启动器都使用 runtime 解析，将 runtime resolution 安装到 Node 的 ESM 与 CommonJS 解析器中，不创建 fallback 链接。依赖遍历包含已安装的可选依赖，跳过目标安装中缺席的包。

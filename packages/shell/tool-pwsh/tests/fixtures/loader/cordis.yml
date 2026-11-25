@@ -18,6 +18,9 @@
 - id: tool-executor-native
   name: '@deepseek-ai/dsh-tool-executor-native'
 
+- id: fs
+  name: '@deepseek-ai/dsh-fs-local'
+
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 

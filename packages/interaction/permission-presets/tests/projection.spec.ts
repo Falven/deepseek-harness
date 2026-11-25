@@ -48,7 +48,10 @@ async function harness(options: {
 /** Mint a scoped agent over a live session (the command executor's addressing shape). */
 async function agentFor(ctx: Context, session: Session) {
   const inject = vi.fn<Agent['inject']>()
-  const agent = { id: session.id, session, inject } as unknown as Agent
+  const agent = {
+    id: session.id, session, inject,
+    changeSettings: async (_change: unknown, apply: () => boolean) => apply(),
+  } as unknown as Agent
   await ctx.plugin(Object.assign((inner: Context) => { createScope(inner, agent) }, { inject: ['commands'] }))
   return { agent, inject }
 }
@@ -170,7 +173,7 @@ describe('/permission command', () => {
     expect(inject.mock.calls[0]?.[0]).toMatchObject({
       content: [{
         type: 'text',
-        text: 'The user changed the approval policy from "ask the user for approval" to "never ask the user for approval".',
+        text: 'The permission preset changed from "workspace-write" to "danger-full-access" (changed by the user).',
       }],
     })
     const run = session.snapshotEvents().find(event => event.type === 'command/run')

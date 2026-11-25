@@ -35,6 +35,20 @@ export interface ILayout {
    */
   selectPanel(panelId: MainPanelId | null): void
   /**
+   * Register a cancellable guard for leaving a global panel.
+   * @param panelId - panel whose departure the guard may reject.
+   * @param guard - returns false to keep that panel selected.
+   * @returns a disposer removing the guard.
+   */
+  onPanelLeave(panelId: MainPanelId, guard: () => boolean): () => void
+  /**
+   * Admit a compound navigation once before it changes Session and panel selection.
+   * @param panelId - destination panel, or null for the Conversation.
+   * @param change - Session and panel selection changes to apply after admission.
+   * @returns whether the navigation was admitted and applied.
+   */
+  withPanelChange(panelId: MainPanelId | null, change: () => void): boolean
+  /**
    * Start an asynchronous navigation, superseding any earlier pending navigation.
    * @returns a signal aborted by the next navigation or layout disposal; check it before committing UI state.
    */
@@ -56,6 +70,8 @@ export interface ILayout {
 /** Cross-plugin panel-action face (ctx.layout). */
 export class LayoutController implements ILayout {
   private navigation = new AbortController()
+  private readonly leaveGuards = new Map<MainPanelId, Set<() => boolean>>()
+  private panelChangeAdmitted = false
 
   /**
    * @param panels - actions of the instance shared with the root entry.
@@ -73,8 +89,30 @@ export class LayoutController implements ILayout {
     if (panelId !== null && !this.hasMainPanel(panelId)) {
       throw new Error(`layout.selectPanel: main panel "${panelId}" is not registered`)
     }
+    if (!this.panelChangeAdmitted && !this.canLeavePanel(panelId)) return
     this.navigation.abort()
     this.panels.selectPanel(panelId)
+  }
+
+  /** A guard can cancel navigation before any panel or Session state changes. */
+  onPanelLeave(panelId: MainPanelId, guard: () => boolean): () => void {
+    const guards = this.leaveGuards.get(panelId) ?? new Set<() => boolean>()
+    guards.add(guard)
+    this.leaveGuards.set(panelId, guards)
+    return () => { guards.delete(guard); if (guards.size === 0) this.leaveGuards.delete(panelId) }
+  }
+
+  /** Apply compound Session/panel changes with a single guard decision. */
+  withPanelChange(panelId: MainPanelId | null, change: () => void): boolean {
+    if (!this.canLeavePanel(panelId)) return false
+    this.panelChangeAdmitted = true
+    try { change(); return true }
+    finally { this.panelChangeAdmitted = false }
+  }
+
+  private canLeavePanel(next: MainPanelId | null): boolean {
+    const current = this.panelInfo.getSnapshot().activePanelId
+    return current === next || current === null || [...(this.leaveGuards.get(current) ?? [])].every(guard => guard())
   }
 
   /** @returns the new pending navigation's cancellation signal. */

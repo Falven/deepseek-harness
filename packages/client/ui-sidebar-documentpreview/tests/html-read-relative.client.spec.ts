@@ -55,9 +55,9 @@ describe('HTML relative file reader', () => {
     expect(addResource).not.toHaveBeenCalled()
   })
 
-  it('refuses non-relative references and preserves Host permission failures', async () => {
+  it('refuses non-relative references and preserves Host read failures', async () => {
     const readRelated = vi.fn<ReadHtmlRelated>().mockResolvedValue({
-      ok: false, error: new RemoteError('workspace-file/outside-workspace', 'outside workspace', { path: '../x.js' }),
+      ok: false, error: new RemoteError('workspace-file/not-found', 'file not found', { path: '../x.js' }),
     })
     const signal = new AbortController().signal
     const read = createReadHtmlRelative(readRelated, ADDRESS, signal, vi.fn())
@@ -65,7 +65,7 @@ describe('HTML relative file reader', () => {
       await expect(read(path, signal)).rejects.toThrow()
     }
     expect(readRelated).not.toHaveBeenCalled()
-    await expect(read('../x.js', signal)).rejects.toThrow('outside workspace')
+    await expect(read('../x.js', signal)).rejects.toThrow('file not found')
   })
 
   it('does not start an already cancelled read', async () => {

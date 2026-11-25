@@ -383,4 +383,28 @@ retirePrompt(agent: Agent, requestId: string): void
 Types: [Agent](core.md) · [SessionId](core.md)
 
 Source: [`packages/client/file-upload/src/index.ts`](../../packages/client/file-upload/src/index.ts)
+
+<a id="file-upload-events"></a>
+
+### `file-upload/*` events
+
+<a id="file-uploadstore--waterfall"></a>
+
+#### `file-upload/store` — waterfall
+
+Scope one validated Session upload while its bytes enter the attachment store.
+
+```ts cordis-catalog
+/**
+ * Scope one validated Session upload while its bytes enter the attachment store.
+ * @param payload - Agent receiving the staged upload.
+ * @param next - Store the validated upload in the receiving Agent's scope.
+ * @mode waterfall
+ */
+'file-upload/store'(payload: { agent: Agent }, next: () => Promise<void>): Promise<void>
+```
+
+Types: [Agent](core.md)
+
+Source: [`packages/client/file-upload/src/index.ts`](../../packages/client/file-upload/src/index.ts)
 <!-- END GENERATED cordis-surface -->

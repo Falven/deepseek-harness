@@ -137,9 +137,9 @@ export function WorkspacePickFlow({
       // The title gives way first, so the suffix that tells the rows apart
       // stays visible; the native tooltip carries the full path.
       label: suffix === undefined
-        ? title
+        ? <span data-workspace-id={id}>{title}</span>
         : (
-          <span className={css.disambiguated} title={path}>
+          <span className={css.disambiguated} title={path} data-workspace-id={id}>
             <span className={css.title}>{title}</span>
             {' '}
             <span className={css.pathSuffix}>{suffix}</span>

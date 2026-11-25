@@ -33,6 +33,13 @@ interface DispatchData {
 }
 
 function rootCall(match: ConversationMatch): StartedToolCall {
+  if (match.event.type === 'tool/host-call') {
+    const { data, time } = match.event
+    const argsRaw = JSON.stringify(data.arguments)
+    return { phase: 'start', callId: String(data.callId), name: data.name,
+      argsRaw, args: PartialArguments.fromText(argsRaw), source: data.source,
+      turn: null, step: null, time, subCalls: [] }
+  }
   if (match.event.type !== 'tool/call') {
     throw new Error('trajectory-tool-call start requires tool/call')
   }
@@ -53,6 +60,16 @@ function rootResult(
   match: ConversationMatch,
   previous?: StartedToolCall,
 ): ToolResultNode | undefined {
+  if (match.event.type === 'tool/host-result') {
+    const { data, time, seq } = match.event
+    const argsRaw = JSON.stringify(data.arguments)
+    return { kind: 'tool-result', seq, time, callId: String(data.callId),
+      name: data.name, args: PartialArguments.fromText(argsRaw),
+      call: { name: data.name, argsRaw },
+      callTime: data.startedAt, source: data.source, status: data.status,
+      content: data.content, isError: data.isError, meta: data.meta, value: data.value,
+      ...data.error === undefined ? {} : { error: data.error }, subCalls: [] }
+  }
   if (match.event.type !== 'tool/result') return undefined
   const message = match.event.data.message
   return {
@@ -214,7 +231,7 @@ function projectCall(
 }
 
 function fallbackState(context: ConversationNodeContext<ToolState>): ToolState | undefined {
-  const resultMatch = context.matches.find(match => match.event.type === 'tool/result')
+  const resultMatch = context.matches.find(match => match.event.type === 'tool/result' || match.event.type === 'tool/host-result')
   const root = resultMatch === undefined ? undefined : rootResult(resultMatch)
   if (root === undefined) return undefined
   let state: ToolState = {
@@ -232,7 +249,8 @@ const trajectoryToolDefinition: ConversationNodeDefinition<ToolState> = {
   kind: 'trajectory-tool-call',
   target: 'trajectory',
   match: (event) => {
-    if (event.type === 'tool/call') return { id: String(event.data.callId), role: 'start' }
+    if (event.type === 'tool/host-result') return { id: String(event.data.callId), role: 'update' }
+    if (event.type === 'tool/call' || event.type === 'tool/host-call') return { id: String(event.data.callId), role: 'start' }
     if (event.type === 'tool/result') {
       return { id: String(event.data.message.source.callId), role: 'update' }
     }
@@ -254,7 +272,7 @@ const trajectoryToolDefinition: ConversationNodeDefinition<ToolState> = {
     }
   },
   update: (context, match) => {
-    if (match.event.type !== 'tool/result') return updateDispatch(context.state, match)
+    if (match.event.type !== 'tool/result' && match.event.type !== 'tool/host-result') return updateDispatch(context.state, match)
     const previous = context.state.calls.get(context.state.rootId)
     const running = previous !== undefined && !('kind' in previous) ? previous : undefined
     const result = rootResult(match, running)

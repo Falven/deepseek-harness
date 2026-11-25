@@ -279,9 +279,11 @@ export interface SubprocessTerminalHandle {
   inspectForeground(): Promise<SubprocessTerminalForeground | undefined>
   /**
    * Observe command activity without interpreting output or treating silence as completion.
-   * @returns a fresh observation; unsupported shells and incomplete observations report unknown.
+   * @param options - `fresh` requires a current provider observation before destructive cleanup.
+   * Ordinary reads may use retained observations.
+   * @returns shell and owned-job activity; unsupported shells and incomplete observations report unknown.
    */
-  inspectActivity(): Promise<SubprocessTerminalActivity>
+  inspectActivity(options?: { fresh?: boolean }): Promise<SubprocessTerminalActivity>
   /**
    * Deliver a signal to the current foreground process group.
    * @param signal - permitted terminal signal.

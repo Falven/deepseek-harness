@@ -326,11 +326,12 @@ export function TrajectoryView({
       requests,
       systemPrompts: inspection.systemPrompts,
       callSchemas,
+      hostCallStartSeqs: inspection.hostCallStartSeqs,
     }, t)
     return { turns, lastIndex: lastCellIndex(turns) }
   }, [
     nodes, eventLocations, partialTurn, partialStep,
-    runningCalls, requests, inspection.systemPrompts, callSchemas, t,
+    runningCalls, requests, inspection.systemPrompts, inspection.hostCallStartSeqs, callSchemas, t,
   ])
   const timelinePartialSignature = partialStructureSignature(partial)
   const partialStartTime = partial?.timing?.stepStartTime

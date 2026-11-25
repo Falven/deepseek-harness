@@ -213,6 +213,7 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
       errorCode?: string
     }[] = []
     const callSchemas = new Map<string, ToolSchema>()
+    const hostCallStartSeqs = new Map<string, number>()
     const consumedPromptChanges = new Set<number>()
     let previousHeader: TrajectoryRequestHeaderState | undefined
     let previousTools: ReadonlyMap<string, ToolSchema> = new Map()
@@ -251,6 +252,7 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
         continue
       }
       if (data.kind === 'tool') {
+        if (data.root.source !== undefined) hostCallStartSeqs.set(data.root.callId, contribution.anchorSeq)
         if ('kind' in data.root) finalized.push(data.root)
         else runningCalls.push(data.root)
         if (previousHeader !== undefined && previousHeader.seq < contribution.anchorSeq) {
@@ -285,6 +287,7 @@ export class TrajectorySnapshotBuilder implements ConversationViewBuilder<
       eventLocations,
       requests,
       callSchemas,
+      ...hostCallStartSeqs.size === 0 ? {} : { hostCallStartSeqs },
       partial,
       runningCalls,
     }

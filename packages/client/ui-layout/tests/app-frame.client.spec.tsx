@@ -108,7 +108,7 @@ function mountFrame(windowWidth = frameWidth, content?: AppFrameProps['renderSlo
     />
   )
   const utils = render(element())
-  const frame = utils.container.firstElementChild as HTMLElement
+  const frame = utils.container.querySelector('[data-dsh-frame]') as HTMLElement
   return {
     ...utils, instance, frame, slotCalls,
     rerenderFrame: () => { utils.rerender(element()) },
@@ -190,6 +190,20 @@ afterEach(() => {
 })
 
 describe('AppFrame', () => {
+  it('uses application metadata supplied by the host before the build title', () => {
+    vi.stubEnv('DSH_CLIENT_TITLE', 'Build title')
+    const meta = document.createElement('meta')
+    meta.name = 'application-name'
+    meta.content = 'Configured product'
+    document.head.append(meta)
+    try {
+      mountFrame()
+      expect(document.title).toBe('Configured product')
+    } finally {
+      meta.remove()
+    }
+  })
+
   it('localizes the product title without a configured build title', () => {
     mountFrame()
     expect(document.title).toBe('DSH Local Build')

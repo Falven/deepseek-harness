@@ -106,7 +106,7 @@ function terminalTitle(title: string): string {
 
 /** Typed Remote control of transient Session-owned terminal processes. */
 export class TerminalController extends TypertRemoteService {
-  static inject = ['subprocess', 'sandboxPolicy', 'workingDirectory', 'typert']
+  static inject = ['agents', 'subprocess', 'sandboxPolicy', 'workingDirectory', 'typert']
   static Config: z<Config> = z.object({
     shell: z.union([z.object({
       path: z.string().required(), name: z.string().required(), args: z.array(z.string()).default([]),
@@ -167,7 +167,8 @@ export class TerminalController extends TypertRemoteService {
   @Remote
   shells(agent: Agent, signal: AbortSignal): Promise<TerminalShell[]> {
     signal.throwIfAborted()
-    return discoverShells(this.execution(agent).subprocess, this.config.shell, this.config.shellCandidates, signal)
+    return this.ctx.agents.withInitiator(agent, () =>
+      discoverShells(this.execution(agent).subprocess, this.config.shell, this.config.shellCandidates, signal))
   }
 
   /**
@@ -413,7 +414,8 @@ export class TerminalController extends TypertRemoteService {
   private async allocate(
     agent: Agent, owner: OwnedSession, id: WebTerminalId, prepare: (signal: AbortSignal) => Promise<TerminalLaunch>, signal: AbortSignal,
   ): Promise<BrowserTerminal> {
-    const allocation = this.spawn(agent, owner, id, prepare, AbortSignal.any([signal, this.lifetime.signal, owner.lifetime.signal]))
+    const allocation = this.ctx.agents.withInitiator(agent, () =>
+      this.spawn(agent, owner, id, prepare, AbortSignal.any([signal, this.lifetime.signal, owner.lifetime.signal])))
     owner.pending.set(id, allocation)
     try {
       const terminal = await allocation

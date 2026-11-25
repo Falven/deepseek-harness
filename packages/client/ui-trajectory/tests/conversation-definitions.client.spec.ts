@@ -324,6 +324,33 @@ describe('Trajectory conversation Definitions', () => {
     },
   )
 
+
+  it('keeps Host call identity and arguments at the accepted Session position', () => {
+    const call = {
+      turn: null, callId: 'host-action', name: 'mcp__catalog__action', arguments: { value: 'exact' },
+      source: { name: 'App', actor: { id: 'alice', name: 'Alice' } },
+    }
+    const accepted = [at(1, 'tool/host-call', call)]
+    const live = assembler(accepted)
+    const running = snapshot(live).runningCalls[0]
+    if (running?.phase !== 'start') throw new Error('expected running Host call')
+    expect(running.name).toBe(call.name)
+    expect(running.args.text('value')).toBe('exact')
+    expect(snapshot(live).hostCallStartSeqs?.get(call.callId)).toBe(1)
+
+    const result = at(3, 'tool/host-result', {
+      ...call, startedAt: 1_700_000_000_001, status: 'completed', isError: false, content: [],
+    })
+    live.replaceWindow([...accepted, result], false)
+    live.flush()
+    const completed = snapshot(live).eventNodes.find(node => node.kind === 'tool-result')
+    if (completed?.kind !== 'tool-result') throw new Error('expected settled Host call')
+    expect(completed.name).toBe(call.name)
+    expect(completed.args.text('value')).toBe('exact')
+    expect(completed.call).toEqual({ name: call.name, argsRaw: '{"value":"exact"}' })
+    expect(snapshot(live).hostCallStartSeqs?.get(call.callId)).toBe(1)
+  })
+
   it('publishes a waiting request before any stream output arrives', () => {
     const value = assembler([at(1, 'turn/start', { turn: 1 })])
     expect(value.append(at(2, 'step/start', { turn: 1, step: 1 }))).toBe('immediate')

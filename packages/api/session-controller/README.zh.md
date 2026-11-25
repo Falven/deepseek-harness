@@ -33,6 +33,8 @@ fork 保留包含截点的 `atSeq` 请求字段，并默认选择已完成轮次
 
 控制器通过可选服务方法 `agentPresets.presetForSession(session)` 读取 Session 已记录的预设。null 结果表示未记录预设；服务缺席表示控制器无法获知预设身份。
 
+宿主集成可设置 `defaultCwd`，用于没有指定 Workspace 或目录的新 Session。`session/attachment-admit` 将图片存储限定到已解析的 Agent，`session/attachment-read` 将附件存储中的图片读取限定到 Gateway 已准入的 Session，`session/input-source` 则在提示词或队列编辑进入收件箱前提供可信来源。队列编辑会在等待来源提供方返回后重新检查同一条待处理消息。
+
 历史页与 follow opening 快照为每个持久 Session 事件携带一条 `{ type: 'event', event: SessionWireEvent }` record。Client 把每条已接受 record 保留为一个持久 `SessionEventLikeEntry`；Assistant token 边界保留在 `assistant/message` 或 `assistant/attempt` 的紧凑流内。工具参数、结果内容、失败信息和 `tool/result.data.meta` 原样通过；控制器不解析工具定义、不运行展示转换器，也不附加 UI 数据。
 
 Client journal 在发布 follow 快照、live entry 或历史页之前验证当前 Session 事件 envelope。它复用浏览器安全的 Session validator，检查必需的 surface marker、精确的 replacement endpoint、更早且唯一的 source seq、内嵌 Assistant 提供方元数据、request header 可选字段的省略规则以及工具错误一致性。无效 record 直接失败，不删除字段或归一化；范围成员与来源存在性仍由 Host 的持久日志检查。
@@ -78,7 +80,7 @@ Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以
 
 队列编辑仅允许用非空文本替换待处理内容。
 
-`session.attachment` 接收 `{ sessionId, attachment: ImageAttachmentRef }`，并把完整引用交给 `AttachmentStore.readImage()`，不读取或遍历 Session 历史。Client 通过 `session.readAttachment(ref)` 传入消息中的引用。连接身份认证和 Gateway 权限检查仍然适用；`sessionId` 为该接口的权限检查指定 Session 资源。授权通过后，处理函数不检查该 Session 是否存在，也不会仅因其不存在而返回 `session/not-found`。获准调用的身份可以读取同一存储中的任意图片，包括仅被其他 Session 引用或未被任何 Session 引用的图片。响应在把 ID、媒体类型、字节数、宽度和高度与存储字节校验后，保留传入的引用。可选的 `name` 和 `originalDimensions` 作为调用方提交的显示信息原样返回，不根据文件校验。对象缺失或无效时返回明确的附件失败。Client 的历史图片缓存按 Session 和附件 ID 保留一份结果与浏览器 URL。
+`session.attachment` 接收 `{ sessionId, attachment: ImageAttachmentRef }`，并把完整引用交给 `AttachmentStore.readImage()`，不读取或遍历 Session 历史。Client 通过 `session.readAttachment(ref)` 传入消息中的引用。连接身份认证和 Gateway 权限检查仍然适用；`sessionId` 为该接口的权限检查指定 Session 资源。授权通过后，处理函数不检查该 Session 是否存在，也不会仅因其不存在而返回 `session/not-found`。如果部署注册了 `session/attachment-read` 监听器或限定范围的附件存储，读取还受该部署的访问规则约束。默认存储按完整引用读取，不查询 Session 历史。响应在把 ID、媒体类型、字节数、宽度和高度与存储字节校验后，保留传入的引用。可选的 `name` 和 `originalDimensions` 作为调用方提交的显示信息原样返回，不根据文件校验。对象缺失或无效时返回明确的附件失败。Client 的历史图片缓存按 Session 和附件 ID 保留一份结果与浏览器 URL。
 
 本控制器通过 `ctx.plugin` 组合 `ArchivedSessionGate`：在 Agent 注册表、Session store 与 Workspace 注册表就绪后加载，随控制器一起释放。它的 `agent/pre-step` 监听器会拒绝为已归档会话或其子代理子孙——沿可用的 Session header 读取，从不包括 fork——提出的步骤，因此迟到的唤醒投递会让该回合以 `blocked` 收口而不发出模型请求；取消归档即为整条血缘解除门禁。Subagent runtime 另行检查保留的创建祖先，覆盖中间创建者已离线的托管后代。已归档会话仍在跑的工作由各自的 owner 通过 Workspace 注册表的归档准入（[接缝](../../workspace/workspace/README.zh.md)）报告与停止：运行中的回合由 [Agent 注册表](../../core/agent/README.zh.md)负责，所属任务由[任务注册表接缝](../../jobs/jobs/README.zh.md)负责，子代理子孙由 [Subagent](../../subagent/subagent/README.zh.md) runtime 负责，提醒由 [Schedule](../../schedule/schedule/README.zh.md) 插件负责；本控制器自己不报告任何内容。
 
@@ -94,7 +96,7 @@ Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以
 <a id="session-media-references"></a>
 ## 会话媒体引用
 
-当 `connection`、`fs` 与 `attachments` 均被组合时，`SessionMediaReferences` 在鉴权 `connection.fetch` 通道上挂载 `GET|HEAD /api/file?path=<绝对路径>`。它通过 `ctx.fs` 读取普通文件，包括已注册工作区之外的临时路径与远程提供方中的文件。目录包含关系与 MIME 类别均不限制访问；`mime-types` 提供响应类型，未知扩展名使用 `application/octet-stream`。GET 复用 `readBytes` 执行读取前及读取中的字节限制；HEAD 只读取元数据。所有文件均使用 `ctx.attachments.imageLimits.maxImageBytes`（通常为 50 MiB）；超过此上限返回 413。`v` 参数与文件当前 `ctx.fs` 版本不同（包括没有该参数）的请求，会收到 `private, no-store` 的 302，跳转到只含 `path` 与当前 `v` 的同一路由；版本化响应为 `private, max-age=31536000, immutable`，因此浏览器在文件变化前复用缓存内容，私有文件内容可能进入浏览器磁盘缓存。响应包含完整文件，忽略 Range，并携带 `nosniff` 与沙箱 CSP，使直接打开的 HTML/SVG 无法以 API 源身份执行脚本。客户端重写位于 `ui-chat`（`AssistantMarkdown`）；音视频文件响应已可用，Markdown 音视频播放器节点仍是独立工作。
+当 `connection`、`fs`、`attachments` 与 `workspaceFiles` 均被组合时，`SessionMediaReferences` 在鉴权 `connection.fetch` 通道上挂载 `GET|HEAD /api/file?path=<绝对路径>&sessionId=<Session ID>`。它通过 `workspaceFiles.scopeOf` 解析 Session 的文件系统范围，再通过 `ctx.fs` 读取普通文件，包括已注册工作区之外的临时路径与远程提供方中的文件。目录包含关系与 MIME 类别均不限制访问；`mime-types` 提供响应类型，未知扩展名使用 `application/octet-stream`。GET 复用 `readBytes` 执行读取前及读取中的字节限制；HEAD 只读取元数据。所有文件均使用 `ctx.attachments.imageLimits.maxImageBytes`（通常为 50 MiB）；超过此上限返回 413。`v` 参数与文件当前 `ctx.fs` 版本不同（包括没有该参数）的请求，会收到 `private, no-store` 的 302，跳转到只含 `path`、`sessionId` 与当前 `v` 的同一路由；版本化响应为 `private, max-age=31536000, immutable`，因此浏览器在文件变化前复用缓存内容，私有文件内容可能进入浏览器磁盘缓存。外部准入模式中的版本化响应改用 `private, no-store`，使每次读取都经过当前应用授权。响应包含完整文件，忽略 Range，并携带 `nosniff` 与沙箱 CSP，使直接打开的 HTML/SVG 无法以 API 源身份执行脚本。客户端重写位于 `ui-chat`（`AssistantMarkdown`）；音视频文件响应已可用，Markdown 音视频播放器节点仍是独立工作。
 
 GUI 模型选择要求确切提供方／模型对出现在可用目录中；不可用的选择以 `session/model-unavailable` 拒绝。提示词准入保留已保存的路由，不按目录可用性阻断发送，由请求执行报告凭据缺失或模型不可用。`initializeDefaultModel()` 在账号登录后、其他提供方均未配置 API key 时，将第一个可用账号模型保存为默认模型；凭据检查使用已配置的引用，不依赖模型是否可用。提供方没有可用模型时，初始化以 `session/provider-models-unavailable` 拒绝。可用性变化不会替换模型或改写会话选择。
 
@@ -107,6 +109,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 
 | 字段 | 默认值 | 含义 |
 |---|---:|---|
+| `defaultCwd` | 进程 cwd | 未指定 Workspace 或目录时新 Session 使用的目录 |
 | `nativeOpen` | 平台探测 | 是否能把 Session 工作区路径交给原生桌面打开器 |
 | `listWorkSliceMs` | `16` | 列表工作时间片，单位为毫秒，取正整数；在完整条目之间检查 |
 

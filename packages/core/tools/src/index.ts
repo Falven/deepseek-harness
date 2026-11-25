@@ -1,4 +1,5 @@
 /** Tool definitions and scoped dispatch to plugin-owned executors. @module */
+import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AnonymousEntries, NamedEntries, ScopedLayers, scopeOf, scopeChainOf } from '@deepseek-ai/dsh-scope'
@@ -6,13 +7,18 @@ import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
 import { ToolExecutorUnavailableError } from './executor.ts'
 import type { ToolExecutor, ToolBatchInput, ToolBatchResult } from './executor.ts'
 import './events.ts'
-import type { ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { ToolCallId, ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { HostToolCallData, HostToolCallSource, HostToolResultData, Session } from '@deepseek-ai/dsh-session'
+import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
+import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
+import { hostToolCallsProjection, type HostCallRecords } from './host-calls.ts'
+import { ToolExecutionPipeline, toolErrorResult } from './pipeline.ts'
 import { projectToolSchema } from './schema.ts'
 import { assertSupportedJsonSchema } from './json-schema.ts'
-import { RUN_CODE_NAME, ToolActivationError } from './contracts.ts'
+import { RUN_CODE_NAME, TOOL_ABORTED, ToolActivationError } from './contracts.ts'
 import type {
   ToolDefinition, ToolRestriction, ToolExecution, ToolGuard, ToolGuardDenial,
-  ResolvedToolSet, ToolActivationContext, ToolRegistrationOptions,
+  ResolvedToolSet, ToolActivationContext, ToolExecutionMode, ToolRegistrationOptions,
 } from './contracts.ts'
 
 declare module '@deepseek-ai/dsh-system-prompt' {
@@ -106,10 +112,23 @@ export class ToolsService extends Service {
   private readonly layers = new ScopedLayers(scope => new ToolLayer(scope), () => { this.ctx.emit('tools/change') })
   private readonly scoped = new WeakMap<ScopeKey, Registration>()
   private root: Registration | undefined
+  private hostCallProjection: ProjectionHandle<HostCallRecords> | undefined
+  private readonly hostCalls = new WeakMap<Session, Map<ToolCallId, {
+    ready: Promise<void>
+    mode: ToolExecutionMode
+    completion: Promise<HostToolResultData>
+  }>>()
   private readonly guards = new ScopedLayers(() => new GuardLayer(), () => {})
 
   constructor(ctx: Context) {
     super(ctx, 'tools')
+    ctx.inject(['sessionProjections'], async (scope) => {
+      const projection = await scope.sessionProjections.register(hostToolCallsProjection)
+      scope.effect(() => {
+        this.hostCallProjection = projection
+        return () => { this.hostCallProjection = undefined }
+      })
+    })
     ctx.systemPrompt.tools(({ scope, toolSet }) => {
       const executor = this.selectExecutor(scope)
       const description = executor.describe(this.definitions(scope, toolSet))
@@ -375,6 +394,99 @@ export class ToolsService extends Service {
    */
   async execute(input: ToolBatchInput): Promise<ToolBatchResult> {
     return this.selectExecutor(input.agent).execute(input)
+  }
+
+  /**
+   * Accept a Host-owned Tool through the guarded pipeline and Session log.
+   * The supplied definition is never registered for model or PTC discovery.
+   * @param session - attached Session owning durable invocation evidence.
+   * @param input - invocation identity, attribution, arguments, and current definition.
+   * @returns durable acceptance and its observer-independent completion.
+   */
+  async startHostCall(session: Session, input: {
+    callId: ToolCallId
+    definition: ToolDefinition
+    arguments: unknown
+    source: HostToolCallSource
+  }): Promise<{ completion: Promise<HostToolResultData> }> {
+    const { callId, definition } = input
+    const args = snapshotJsonValue(input.arguments)
+    if (args === undefined) throw new TypeError('Host Tool arguments must be losslessly JSON-serializable')
+    const data: HostToolCallData = { turn: null, callId, name: definition.name, arguments: args as JsonValue, source: input.source }
+    const sessions = this.ctx.get('sessions')
+    if (sessions === undefined) throw new Error('Host Tool calls require the native Session store')
+    if (this.hostCallProjection === undefined) throw new Error('Host Tool calls require the native Session projection registry')
+    const receipts = this.hostCallProjection.stateOf(session)
+    const previous = Object.hasOwn(receipts, callId) ? receipts[callId] : undefined
+    if (previous !== undefined) {
+      if (!isDeepStrictEqual(previous.call, data)) throw new Error('Host Tool identity already belongs to a different invocation')
+      const active = this.hostCalls.get(session)?.get(callId)
+      if (active !== undefined) { await active.ready; return active }
+      const settled = previous.result
+      if (settled === undefined) throw new Error('Host Tool outcome is unknown; observing it never retries the invocation')
+      return { completion: Promise.resolve(settled) }
+    }
+    const accepted = session.append('tool/host-call', data)
+    const controller = new AbortController()
+    const execution = { callId, name: definition.name, arguments: accepted.data.arguments, signal: controller.signal }
+    const flush = async (): Promise<void> => {
+      if (!await sessions.flush(session)) throw new Error('Host Tool calls require native Session persistence')
+    }
+    let dispatched = false
+    const admitted: ToolDefinition = {
+      ...definition,
+      execute: async (args, exec) => {
+        session.append('tool/host-dispatch', { turn: null, callId })
+        await flush()
+        exec.signal.throwIfAborted()
+        dispatched = true
+        return definition.execute(args, exec)
+      },
+    }
+    const pipeline = new ToolExecutionPipeline(this.ctx, {
+      get: name => name === admitted.name ? admitted : undefined,
+    })
+    const mode = pipeline.executionMode(execution)
+    const predecessors = [...this.hostCalls.get(session)?.values() ?? []]
+      .filter(call => mode.kind === 'exclusive' || call.mode.kind === 'exclusive')
+      .map(call => call.completion)
+    const ready = flush()
+    const completion = ready.then(async () => {
+      await Promise.allSettled(predecessors)
+      const prepared = await pipeline.prepare(execution)
+      const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared
+      return pipeline.complete(prepared.exec, outcome)
+    }, (error: unknown) => toolErrorResult(error)).then(async (result) => {
+      const settled: HostToolResultData = {
+        ...accepted.data, startedAt: accepted.time,
+        status: result.isError
+          ? !dispatched ? 'not-dispatched'
+            : result.error.info?.code === 'TOOL_OUTCOME_UNKNOWN' || result.error.info?.code === TOOL_ABORTED ? 'unknown' : 'failed'
+          : 'completed',
+        content: result.content, isError: result.isError,
+        ...result.isError ? { error: {
+          name: result.error.info?.name ?? 'Error', code: result.error.info?.code ?? 'TOOL_FAILED', reason: result.error.message,
+        } } : { value: result.value },
+        ...result.meta === undefined ? {} : { meta: result.meta },
+      }
+      session.append('tool/host-result', settled)
+      await flush()
+      return settled
+    })
+    let calls = this.hostCalls.get(session)
+    if (calls === undefined) { calls = new Map(); this.hostCalls.set(session, calls) }
+    calls.set(callId, { ready, completion, mode })
+    const dispose = this.ctx.effect(() => async () => {
+      controller.abort()
+      await completion.catch((error: unknown) => { this.ctx.logger.error(error) })
+    }, 'tools: Host call lifetime')
+    void completion.then(() => { calls.delete(callId); void dispose() }, (error: unknown) => {
+      calls.delete(callId)
+      this.ctx.logger.error(error)
+      void dispose()
+    })
+    await ready
+    return { completion }
   }
 
   /**

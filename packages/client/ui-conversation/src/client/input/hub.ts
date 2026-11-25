@@ -18,7 +18,7 @@ import type { ModelSelectionProjection } from '@deepseek-ai/dsh-agent/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type {
   DraftAttachmentId, DraftAttachmentSerializationResult, DraftInitializationOptions, DraftInitializationResult, InputState,
-  InputTriggerController, SessionInputResolver, SessionInput, SubmitOutcome,
+  InputTriggerController, PreparedPromptContent, SessionInputResolver, SessionInput, SubmitOutcome,
 } from '../contract/input.ts'
 import type { ComposerKeyboard } from '../contract/draft-editor.ts'
 import type { ComposerBlocks } from '../contract/composer-blocks.ts'
@@ -42,6 +42,7 @@ interface InputTriggerServiceFace {
 /** Attachment-send face resolved lazily to keep hub/service construction acyclic. */
 interface ConversationAttachmentFace {
   readonly blocks: ComposerBlocks
+  prepareContent(sessionId: SessionId): PreparedPromptContent
   sendSession(
     session: SessionFace,
     text: string,
@@ -49,6 +50,7 @@ interface ConversationAttachmentFace {
     mode: InputSubmitMode,
     signal?: AbortSignal,
     accept?: () => void,
+    prepareContent?: PreparedPromptContent,
   ): Promise<SubmitOutcome>
   serializeDraftAttachments(attachmentIds: readonly DraftAttachmentId[]): Promise<DraftAttachmentSerializationResult>
   releaseDraftAttachment(id: DraftAttachmentId): void
@@ -179,7 +181,9 @@ export class InputHub implements SessionInputResolver {
       popup: () => this.popup(actx),
       inbox: session.projections.faceOf('inbox') as ObservableSnapshot<InboxState | undefined>,
       events: binding.eventSource,
-      defaultSink: (text, attachmentIds, mode, signal, accept) => this.sink(session, text, attachmentIds, mode, signal, accept),
+      prepareContent: () => this.conversation().prepareContent(session.sessionId),
+      defaultSink: (text, attachmentIds, mode, signal, accept, prepareContent) =>
+        this.sink(session, text, attachmentIds, mode, signal, accept, prepareContent),
       quoteRemoveLabel: () => this.t('quote.remove'),
       session: () => session.getSnapshot(),
       composerBlock: () => this.conversation().blocks.storeFor(session.sessionId).getSnapshot(),
@@ -366,11 +370,12 @@ export class InputHub implements SessionInputResolver {
     mode: InputSubmitMode,
     signal: AbortSignal,
     accept: () => void,
+    prepareContent?: PreparedPromptContent,
   ): Promise<SubmitOutcome> {
     if (text === '' && attachmentIds.length === 0) {
       return session.prompt([], mode, signal).then(result => result.ok ? { kind: 'success' } : { kind: 'error' })
     }
-    return this.conversation().sendSession(session, text, attachmentIds, mode, signal, accept)
+    return this.conversation().sendSession(session, text, attachmentIds, mode, signal, accept, prepareContent)
   }
 
   /**

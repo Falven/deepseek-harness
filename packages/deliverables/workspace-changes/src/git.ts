@@ -2,6 +2,7 @@
 import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import type { WorkspaceChangesScratch } from './environment.ts'
 import { parseNumstat, type NumstatEntry } from './numstat.ts'
 import { canonicalPath, isInside, toPosix } from './paths.ts'
 
@@ -43,6 +44,7 @@ export class GitRunner {
     private readonly subprocess: SubprocessRuntime,
     private readonly executable: string,
     private readonly limits: GitLimits,
+    private readonly executionSignal?: AbortSignal,
   ) {}
 
   /**
@@ -54,7 +56,7 @@ export class GitRunner {
    */
   async run(args: readonly string[], options: GitRunOptions): Promise<GitRunResult> {
     const timeout = AbortSignal.timeout(this.limits.timeoutMs)
-    const signal = AbortSignal.any([options.signal, timeout])
+    const signal = AbortSignal.any([options.signal, timeout, ...this.executionSignal === undefined ? [] : [this.executionSignal]])
     const handle = this.subprocess.spawn({
       argv: [this.executable, ...args],
       cwd: options.cwd,
@@ -103,6 +105,18 @@ export interface GitWorkspace {
   env: Readonly<Record<string, string>>
   /** Work-tree paths a snapshot must skip: the private directory when a temporary root lies inside the work tree. */
   excludes: readonly string[]
+  /** Private index and object filesystem in the Git execution world. */
+  io: WorkspaceChangesScratch
+  /** Optional absolute paths limiting snapshots and comparisons. */
+  paths?: readonly string[]
+}
+
+/** Local execution-world operations used when no remote environment is supplied. */
+export const localScratch: WorkspaceChangesScratch = {
+  mkdir: async (path) => { await mkdir(path, { recursive: true }) },
+  mkdtemp: async prefix => canonicalPath(await mkdtemp(prefix)),
+  copyFile,
+  remove: path => rm(path, { recursive: true, force: true }),
 }
 
 /** Whether a filesystem error names a missing path. */
@@ -122,22 +136,28 @@ function isMissing(error: unknown): boolean {
  * @param cwd - absolute Session working directory.
  * @param scratch - yields the private directory for snapshot objects and scratch indexes; called only for a located repository.
  * @param signal - cancellation.
+ * @param io - filesystem operations for private scratch storage.
+ * @param canonicalize - resolves a path to its canonical spelling.
+ * @param paths - optional worktree paths included in the snapshot.
  * @returns the repository, or null when the directory is not inside one.
  */
 export async function locateGitWorkspace(
   git: GitRunner, cwd: string, scratch: () => Promise<string>, signal: AbortSignal,
+  io: WorkspaceChangesScratch = localScratch,
+  canonicalize: (path: string) => Promise<string> = canonicalPath,
+  paths?: readonly string[],
 ): Promise<GitWorkspace | null> {
   const found = await git.run(['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-path', 'objects'], { cwd, signal })
   if (found.exitCode === 128 && /not a git repository/i.test(found.stderr)) return null
   const lines = ok(found, 'git rev-parse').stdout.split('\n').map(line => resolve(cwd, line))
   const [root, gitDir, repositoryObjects] = lines as [string, string, string]
   // git reports the canonical root; compare the private directory in the same spelling.
-  const directory = await canonicalPath(await scratch())
+  const directory = await canonicalize(await scratch())
   const objects = join(directory, 'objects')
-  await mkdir(objects, { recursive: true })
+  await io.mkdir(objects)
   const excludes = isInside(root, directory) ? [toPosix(relative(root, directory))] : []
   const env = { GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: repositoryObjects }
-  return { root, gitDir, scratch: directory, env, excludes }
+  return { root, gitDir, scratch: directory, env, excludes, io, ...paths === undefined ? {} : { paths } }
 }
 
 /**
@@ -152,22 +172,36 @@ export async function locateGitWorkspace(
  * @returns the tree object id.
  */
 export async function snapshotTree(git: GitRunner, workspace: GitWorkspace, signal: AbortSignal): Promise<string> {
-  const scratch = await mkdtemp(join(workspace.scratch, 'index-'))
+  const scratch = await workspace.io.mkdtemp(join(workspace.scratch, 'index-'))
   try {
     const index = join(scratch, 'index')
     // A repository without an index yet (fresh `git init`) starts from scratch.
-    await copyFile(join(workspace.gitDir, 'index'), index).catch((error: unknown) => {
+    await workspace.io.copyFile(join(workspace.gitDir, 'index'), index).catch((error: unknown) => {
       if (!isMissing(error)) throw error
     })
     const env = { ...workspace.env, GIT_INDEX_FILE: index }
     // `--ignore-errors` skips unreadable files and reports them through exit code 1; the index is still complete.
-    const pathspec = workspace.excludes.length === 0 ? [] : ['--', '.', ...workspace.excludes.map(path => `:(exclude)${path}`)]
-    const added = await git.run(['add', '--all', '--ignore-errors', ...pathspec], { cwd: workspace.root, env, signal })
-    /* v8 ignore next -- git reports a skipped unreadable file only on hosts whose permissions the tests can revoke. */
-    if (added.exitCode !== 1) ok(added, `git add in ${workspace.root}`)
+    const paths: string[] = []
+    if (workspace.paths !== undefined) {
+      for (const path of workspace.paths.filter(path => isInside(workspace.root, path))) {
+        const literal = `:(literal)${toPosix(relative(workspace.root, path)) || '.'}`
+        // Absent optional files must not make `git add` reject the complete snapshot.
+        const matches = ok(await git.run(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', literal], {
+          cwd: workspace.root, env, signal,
+        }), 'git ls-files')
+        if (matches.stdout !== '') paths.push(literal)
+      }
+    }
+    if (workspace.paths === undefined || paths.length > 0) {
+      const pathspec = workspace.paths === undefined && workspace.excludes.length === 0 ? []
+        : ['--', ...workspace.paths === undefined ? ['.'] : paths, ...workspace.excludes.map(path => `:(exclude)${path}`)]
+      const added = await git.run(['add', '--all', '--ignore-errors', ...pathspec], { cwd: workspace.root, env, signal })
+      /* v8 ignore next -- git reports a skipped unreadable file only on hosts whose permissions the tests can revoke. */
+      if (added.exitCode !== 1) ok(added, `git add in ${workspace.root}`)
+    }
     return ok(await git.run(['write-tree'], { cwd: workspace.root, env, signal }), 'git write-tree').stdout.trim()
   } finally {
-    await rm(scratch, { recursive: true, force: true })
+    await workspace.io.remove(scratch)
   }
 }
 
@@ -190,6 +224,7 @@ export interface TreeBlob {
 export async function treeBlob(
   git: GitRunner, workspace: GitWorkspace, tree: string, path: string, signal: AbortSignal,
 ): Promise<TreeBlob | null> {
+  if (workspace.paths !== undefined && !workspace.paths.some(allowed => isInside(allowed, resolve(workspace.root, path)))) return null
   // The path is a pathspec; literal matching keeps `*`, `?`, and `[` in a file name from selecting another entry.
   const result = ok(await git.run(['ls-tree', '-z', '-l', tree, '--', path], {
     cwd: workspace.root, env: { ...workspace.env, GIT_LITERAL_PATHSPECS: '1' }, signal,
@@ -232,7 +267,10 @@ export async function diffTrees(
   git: GitRunner, workspace: GitWorkspace, before: string, after: string, signal: AbortSignal,
 ): Promise<NumstatEntry[]> {
   if (before === after) return []
-  const result = ok(await git.run(['diff-tree', '-r', '-M', '-z', '--numstat', before, after], {
+  const paths = workspace.paths?.filter(path => isInside(workspace.root, path))
+  if (paths?.length === 0) return []
+  const pathspec = paths === undefined ? [] : ['--', ...paths.map(path => `:(literal)${toPosix(relative(workspace.root, path)) || '.'}`)]
+  const result = ok(await git.run(['diff-tree', '-r', '-M', '-z', '--numstat', before, after, ...pathspec], {
     cwd: workspace.root, env: workspace.env, signal,
   }), 'git diff-tree')
   if (result.truncated) throw new Error('git diff-tree output exceeded the configured cap')

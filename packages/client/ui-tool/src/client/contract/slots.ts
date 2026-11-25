@@ -3,6 +3,7 @@ import type {
   HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, SessionIdOf,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
+import type { IJobs, JobView, ObservedJob } from '@deepseek-ai/dsh-api-job-controller/client'
 import type {
   OpenFileOptions, PreparingToolCall, StartedToolCall,
   ToolResultNode, UseDisclosure,
@@ -14,10 +15,7 @@ import type { ToolFileInjected } from '../tool/file-menu.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    /**
-     * Key by wire name, including custom tools; a typo never renders. Unclaimed keys use the generic row.
-     * Use `key: '<tool name>'` to replace the view; phase data has `name` and lazy, possibly partial `args`.
-     */
+    /** Register a wire name with `key` to replace its row. Unclaimed keys use the generic row. */
     'tool.call.toolview': {
       kind: 'keyed'
       scope: 'session'
@@ -54,15 +52,15 @@ export interface ToolImagesOwnerProps {
 export interface ToolCallCommonProps {
   /** Stable Hook; each invocation owns its open state and subscribes to enclosing-Turn resets. */
   useDisclosure: UseDisclosure
+  /** Current native Job output and controls for this call's expanded terminal. */
+  commandActivity?: ToolCommandActivity | undefined
   /** Call identity, stable across all stages. */
   callId: string
-  /** Wire Tool name and keyed dispatch value. */
   toolName: string
   /** Session workspace root for relative summaries. */
   cwd?: string | undefined
   /** Host account home; POSIX home-rooted summaries display as `~`. */
   home?: string | undefined
-  /** Open an argument path at its optional requested line. */
   openFile: (path: string, options?: OpenFileOptions) => void
   /** Chat-supplied, Gateway-authorized loader for durable images; Tool views do not manage attachment URLs. */
   loadImage: MessageImageLoader
@@ -70,7 +68,14 @@ export interface ToolCallCommonProps {
   inspect?: (() => void) | undefined
 }
 
-/** Stage-specific tool data; only start/result expose the dispatched call material. */
+/** Live job activity associated with a command row and its execution directory. */
+export type ToolCommandActivity = Pick<ToolHostInfoInjected, 'watchJobs' | 'observeJob'> & {
+  jobId: JobView['id'] | undefined
+  cwd: string | undefined
+  observation: ObservedJob | undefined
+}
+
+/** Stage-specific tool data. Preparation exposes the name and partial arguments. */
 export type ToolCallPhaseProps =
   | { readonly phase: 'preparing'; readonly block: PreparingToolCall }
   | { readonly phase: 'start'; readonly block: StartedToolCall }
@@ -134,6 +139,8 @@ declare module '@deepseek-ai/cordis' {
 
 /** Injected Host description for POSIX home-path display. */
 export type ToolHostInfoInjected = {
+  watchJobs: () => () => void
+  observeJob: (id: JobView['id']) => () => void
   hooks: {
     /**
      * Fixed Host facts, reached through a hook rather than injected as values:
@@ -142,6 +149,7 @@ export type ToolHostInfoInjected = {
      * saw. Select the field the view needs (`info => info.home`).
      */
     hostInfo: HostObservable<RemoteHostFacts>
+    jobs: IJobs['state']
   }
 }
 

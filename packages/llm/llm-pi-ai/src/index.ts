@@ -78,9 +78,10 @@ import { providerDefaultsOf } from './provider-data.ts'
 import type { PiAiRequestHeaderContext } from './types.ts'
 
 export { PiAiAdapter } from './adapter.ts'
-export type { PiAiAdapterOptions } from './adapter.ts'
+export type { PiAiAdapterOptions, PiAiAuthInjection } from './adapter.ts'
 export type { PiAiRequestHeaderContext } from './types.ts'
-export { Config } from './config.ts'
+export { assertServiceable, Config, ProviderProfileSchema, resolveProfiles } from './config.ts'
+export { discoverModels } from './discovery.ts'
 export type {
   Options,
   PiAiCompatProfile,
@@ -92,6 +93,7 @@ export type {
   PiAiThinkingFormat,
   ResolvedPiAiProviderProfile,
 } from './config.ts'
+export { authContextFrom, credentialStoreFrom } from './auth.ts'
 export { supportedProtocols } from './provider.ts'
 
 export const name = 'llm-pi-ai'

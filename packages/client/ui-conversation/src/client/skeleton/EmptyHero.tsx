@@ -47,6 +47,7 @@ export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, t }
       ref={buttonRef}
       type="button"
       className={css.workspace}
+      data-workspace-chooser
       aria-label={t('hero.chooseWorkspace')}
       aria-haspopup="menu"
       aria-expanded={menuOpen}

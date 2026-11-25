@@ -1053,6 +1053,10 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           expect(feedback.map(event => event.type)).toEqual([
             'feedback/record', 'feedback/record', 'feedback/message-put', 'feedback/message-put', 'feedback/message-delete',
           ])
+          const host = result.events.filter(event => event.type.startsWith('tool/host-'))
+          expect(host.map(event => event.type)).toEqual(['tool/host-call', 'tool/host-dispatch', 'tool/host-result'])
+          expect(host.map(event => event.data['turn'])).toEqual([null, null, null])
+          expect(host[2]?.data).toMatchObject({ status: 'completed', value: 'host action complete', meta: { receipt: 'saved' } })
         }
         await waitForRootEvent(
           subscription,

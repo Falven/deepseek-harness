@@ -510,6 +510,7 @@ describe('ConversationRoot resident composer', () => {
     // would send the user somewhere they cannot act yet.
     const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
       summaryBlank: true,
+      omitSummaryRow: true,
       composerBlock: { reason: 'select a model first' },
     })
     const box = b.view.getByRole('textbox')
@@ -521,6 +522,15 @@ describe('ConversationRoot resident composer', () => {
     expect(modelSeat).toEqual({ locked: true })
   })
 
+  it('keeps an ungrouped blank Session editable at its retained directory', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, { summaryBlank: true })
+    const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('contenteditable')).toBe('true')
+    expect(b.view.getByText('one')).toBeTruthy()
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(b.sink).toHaveBeenCalledWith('ordinary draft', [], 'queue', expect.any(AbortSignal), expect.any(Function), undefined)
+  })
+
   it('keeps composer text in the machine, mirrors to the Conversation store, and submits through the sink', () => {
     const b = mount(sessionSnapshotOf())
     const box = b.view.getByRole('textbox')
@@ -528,7 +538,7 @@ describe('ConversationRoot resident composer', () => {
     act(() => { b.wiring.setDraft('ordinary revised') })
     expect(b.store.store.getSnapshot().draft).toEqual({ text: 'ordinary revised', references: [] })
     fireEvent.keyDown(box, { key: 'Enter' })
-    expect(b.sink).toHaveBeenCalledWith('ordinary revised', [], 'queue', expect.any(AbortSignal), expect.any(Function))
+    expect(b.sink).toHaveBeenCalledWith('ordinary revised', [], 'queue', expect.any(AbortSignal), expect.any(Function), undefined)
     // The current crumb is plain text (a drag surface on darwin), not a button.
     expect(b.view.queryByRole('button', { name: 'Child' })).toBeNull()
     expect(b.view.getByText('Child').tagName).toBe('SPAN')

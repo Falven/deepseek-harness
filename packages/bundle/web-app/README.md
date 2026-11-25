@@ -60,6 +60,7 @@ The `minimal` agent preset uses a persistent shell, the `read_image` tool, and a
 | `openBrowser` | `true` | Open the first eligible entry after startup, except under SSH |
 | `surfaceContext` | `true` | Expose `DSH_WEB_URL` to the agent's shell commands |
 | `publicUrl` | Unset | Advertised HTTP(S) application root; otherwise announce the bind-address URL |
+| `indexPaths` | `[]` | Additional exact SPA paths served as the native index with root-relative assets |
 
 WebApp owns `printUrl` and `openBrowser`. This bundle enables URL printing and maps the parsed `--no-open` setting to the runtime. After readiness, synchronous `webserver/entry-url` listeners contribute complete entries. WebApp prints every entry as `label: url` when printing is enabled and opens only the first entry marked `open: true` when browser opening is enabled outside SSH. No entries means no output or opening.
 

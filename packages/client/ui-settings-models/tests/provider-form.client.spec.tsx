@@ -217,7 +217,7 @@ async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
     operations: operationsWith(scripted.face),
     schema: settingsSchema,
     t,
-    renderSlot: () => null,
+    renderSlot: (_name, _props, options) => options?.fallback,
   }
   render(<ModelsSection {...injected} />)
   return { ...scripted, controller }

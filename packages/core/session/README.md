@@ -87,7 +87,7 @@ The [experimental persistence catalog](../../../docs/experimental-persistence-ca
 
 ### Fork a session
 
-`ctx.sessions.fork(source, boundary?, childSessionId?)` copies an exact inclusive event prefix (default: the last event) from a live source. `buildForkSeed` in `dsh-session/fork` places an inherited marker after the copied events, adds missing error tool results only for the open step, and closes that step and turn with a `forked` reason. Closed steps and turns remain unchanged, including historical missing results. The marker and closers belong to the child; `inheritedEventCount` counts only the copied prefix.
+`ctx.sessions.fork(source, boundary?, childSessionId?)` copies an exact inclusive event prefix (default: the last event) from a live source. `buildForkSeed` in `dsh-session/fork` places an inherited marker after the copied events, adds missing error tool results only for the open step, marks unresolved Host calls unknown without transferring their live work, and closes that step and turn with a `forked` reason. Closed steps and turns remain unchanged, including historical missing results. The marker and closers belong to the child; `inheritedEventCount` counts only the copied prefix.
 
 A rejected fork throws `SessionForkError` with a `SessionForkErrorCode`; both are exported from the package root.
 
@@ -135,7 +135,7 @@ Every append uses the shared iterative `snapshotJsonValue()` pass, which reads, 
 
 ### Shared recovery
 
-`ToolCallRecovery` tracks unanswered requests from committed events without retaining event history. AgentLoop observes live steps; crash recovery and fork-seed construction replay their prefixes through `openTurnClosers`. Live failures and crash recovery use interrupted-result wording by default; fork construction passes the fork cause to select its distinct retry guidance. The caller appends recovery results before closing the step ([reference](../agent-loop/README.md)).
+`ToolCallRecovery` tracks unanswered requests from committed events without retaining event history. AgentLoop observes live steps; crash recovery and fork-seed construction replay their prefixes through `openTurnClosers`. Live failures and crash recovery use interrupted-result wording by default; fork construction passes the fork cause to select its distinct retry guidance. The caller appends recovery results before closing the step ([reference](../agent-loop/README.md)). Unresolved Host calls receive a terminal not-dispatched or unknown result even when no assistant turn is open; recovery never runs their bodies.
 
 ### Derived history
 

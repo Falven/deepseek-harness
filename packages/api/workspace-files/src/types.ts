@@ -2,17 +2,8 @@
  * Wire types of the `workspaceFiles` Remote namespace. Types only: generated
  * Remote clients consume this module without Host runtime code.
  *
- * Two path vocabularies leave here, and each method uses exactly one:
- *
- * - `read`, `readBytes`, `stat`, and `changes` name a file by its absolute path in the
- *   filesystem's execution world, because their consumer is the Client
- *   resource system, whose `dsh-resource://file/session/<id>/<path>` address carries that
- *   same path.
- * - `list` speaks workspace paths — the same syntax its `path` argument accepts —
- *   because its consumer is a tree rooted at the workspace root.
- * - `search` reports `/`-joined workspace-relative paths, and its query and
- *   exclusions use the same relative syntax, because its consumer is the same
- *   workspace tree.
+ * File reads, directory listings and change observations report absolute paths
+ * from the filesystem's execution world. Searches use workspace-relative paths.
  *
  * @module @deepseek-ai/dsh-api-workspace-files/types
  */
@@ -111,11 +102,9 @@ export interface WorkspaceDirectoryEntry {
 /** Direct children of one workspace directory. */
 export interface WorkspaceDirectoryListing {
   /**
-   * The listed directory as a workspace path, relative to the workspace root
-   * and empty for the root itself. A child's path is this value joined with
-   * {@link WorkspaceDirectoryEntry.name} by `/`.
+   * Absolute directory path in the filesystem's execution world, with symlinks resolved.
    */
-  readonly path: string
+  readonly absolutePath: string
   /**
    * Direct children in the backend's stable name order, cut to the configured
    * entry cap. Presentation order is the caller's choice.
@@ -209,10 +198,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'workspace-file/search-failed': Record<string, never>
     /** The filesystem provider cannot initialize a watch for this target. */
     'workspace-file/watch-unsupported': { readonly path: string }
-    /** No entry exists at that path inside the workspace. */
+    /** No entry exists at that path. */
     'workspace-file/not-found': { readonly path: string }
-    /** The directory listing or watch path resolves outside the Session's workspace root. */
-    'workspace-file/outside-workspace': { readonly path: string }
     /** The requested page exceeds the configured byte cap; nothing is returned. */
     'workspace-file/too-large': { readonly path: string; readonly limit: number }
     /** The content read so far is not decodable UTF-8 text, or the page carries NUL bytes. */

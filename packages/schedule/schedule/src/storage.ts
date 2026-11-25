@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { MessageId } from '@deepseek-ai/dsh-llm/types'
+import type { MessageId, MessageSource } from '@deepseek-ai/dsh-llm/types'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { decodeScheduleRecord } from './domain.ts'
 import type { ScheduleDeliveryRecord, ScheduleId, ScheduleRecord, ScheduleTarget } from './types.ts'
@@ -76,6 +76,8 @@ export const scheduleTaskSchema = z.object({
   lastDelivery: deliveryReceiptSchema.optional(),
   deliveryHistory: deliveryHistorySchema.optional(),
   pendingDelivery: z.object({ targetSessionId: sessionIdSchema }).strict().optional(),
+  deliverySource: z.custom<MessageSource>().optional(),
+  deliverySourceKey: z.string().optional(),
 }).strict().transform(({ sessionId, target: savedTarget, lastDelivery, deliveryHistory, ...task }, context) => {
   const binding = savedTarget === undefined && sessionId !== undefined ? sessionIdSchema.safeParse(sessionId) : undefined
   if (binding?.success === false) {

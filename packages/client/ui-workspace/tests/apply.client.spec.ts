@@ -84,7 +84,11 @@ async function bench(access: 'fake' | 'static' = 'fake') {
   }))
   const rename = vi.fn(async () => ({}))
   const selectPanel = vi.fn()
-  ctx.provide('layout', { selectPanel, beginNavigation: () => new AbortController().signal })
+  ctx.provide('layout', {
+    selectPanel,
+    withPanelChange: (_panel: unknown, change: () => void) => { change(); return true },
+    beginNavigation: () => new AbortController().signal,
+  })
   const search = vi.fn(async () => ({
     ok: true as const,
     value: { items: [{ sessionId: 'session' as never, snippet: 'match' }], hasMore: false },

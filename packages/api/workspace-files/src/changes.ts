@@ -30,7 +30,7 @@ export class WorkspaceChangeFeed {
   }
 
   /**
-   * Open one target watch; directory targets remain inside `workspaceRoot`.
+   * Open one target watch under the filesystem's read authority.
    * @param workspaceRoot - the session's workspace root path.
    * @param path - target path, resolved relative to the workspace root; Host metadata determines its type.
    * @param signal - generation cancellation.
@@ -53,24 +53,16 @@ export class WorkspaceChangeFeed {
     let unwatch: (() => Promise<void>) | undefined
     try {
       // Setup shares cancellation, so a late resolution cannot acquire a watcher.
-      const root = await this.ctx.fs.resolve(workspaceRoot, { signal }).catch((error: unknown) => {
-        if (aborted()) return undefined
-        throw error
-      })
-      if (root === undefined || aborted() || follower.isClosed) return
       const target = await this.ctx.fs.resolve(path, { cwd: workspaceRoot, signal }).catch((error: unknown) => {
         if (aborted()) return undefined
         throw error
       })
-      if (target === undefined || aborted()) return
+      if (target === undefined || aborted() || follower.isClosed) return
       const stat = async () => {
         const info = await this.ctx.fs.stat(target, signal).catch((error: unknown) => {
           if (aborted()) return undefined
           throw error
         })
-        if (info?.type === 'directory' && !this.ctx.fs.contains(root, target)) {
-          throw new RemoteError('workspace-file/outside-workspace', 'Directory is outside the workspace', { path })
-        }
         return info
       }
       await stat()

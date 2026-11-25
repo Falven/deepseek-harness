@@ -73,6 +73,8 @@ export interface TrajectorySnapshot {
   readonly eventLocations: ReadonlyMap<number, ConversationLocation>
   readonly requests: readonly RequestView[]
   readonly callSchemas: ReadonlyMap<string, ConversationPromptSnapshot['tools'][number]>
+  /** Original positions of Host calls, including those now represented by a result. */
+  readonly hostCallStartSeqs?: ReadonlyMap<string, number>
   readonly partial: TrajectoryPartialAssistant | null
   readonly runningCalls: readonly RunningToolCall[]
 }

@@ -242,6 +242,7 @@ describe('JobController', () => {
       inject: () => {},
       cancel: () => {},
       runMaintenance: task => task(new AbortController().signal),
+      changeSettings: async (_change, apply) => apply(),
       whenIdle: () => Promise.resolve(),
     }
     await ctx.agents.register(owner)

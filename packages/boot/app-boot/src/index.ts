@@ -8,7 +8,7 @@
 
 import { pathToFileURL } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { inspect, parseEnv } from 'node:util'
+import { inspect, isDeepStrictEqual, parseEnv } from 'node:util'
 import { captureStartupComposition, type StartupCompositionDiagnostic } from './startup-diagnostics.ts'
 export type { StartupCompositionDiagnostic, StartupPluginState, StartupServiceState } from './startup-diagnostics.ts'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
@@ -30,6 +30,7 @@ export {
 import { prepareProfilePatches } from './compatibility-preflight.ts'
 import { ProfileRuntimeResolution, type RuntimeResolution } from './profile.ts'
 import { ResolutionRestartRequired } from './profile-resolution/resolver.ts'
+import type { ProfileContext } from './profile-context.ts'
 export { prepareProfileEntries, prepareProfilePatches } from './compatibility-preflight.ts'
 export { readPluginMeta, resolvePluginResource } from './package-meta.ts'
 export { generateConfigSchema, type ConfigSchemaDump, type NativeConfigSchema } from './config-schema/index.ts'
@@ -50,6 +51,11 @@ declare module '@deepseek-ai/cordis' {
   }
 
   interface Events {
+    /** Admit a profile application before it stops entries or publishes a runtime resolution.
+     * @param profile - profile application awaiting admission.
+     * @mode waterfall
+     */
+    'app-boot/profile-reload'(profile: ProfileContext, next: () => Promise<ProfileReloadOutcome>): Promise<ProfileReloadOutcome>
     /**
      * Profile patches were reconciled into the running Loader tree: every entry update settled and no new
      * inactive entry was introduced. Carries no diff; listeners re-read Loader entries.
@@ -300,6 +306,25 @@ export interface ProfileRecomposition {
   restartReason?: 'package-moved'
 }
 
+/** Shared result of a profile reload admitted by the Host. */
+export interface ProfileReloadOutcome {
+  /** Diagnostics for entries that were already inactive. */
+  warnings: string[]
+  /** Changed modules that remain pending until restart when HMR supplied the reload. */
+  pending?: { url: string; reason: 'host-module' | 'unmanaged-plugin' | 'module-comparison' }[]
+  /** Why the saved change cannot apply without a restart. */
+  restartReason?: 'package-moved' | 'module-comparison'
+}
+
+/** A Host saved a profile edit and queued activation after active work settles. */
+export class ProfileReloadDeferred extends Error {
+  /** @param completion - settles after the queued profile application. */
+  constructor(readonly completion: Promise<ProfileReloadOutcome>) {
+    super('Configuration saved; activation is queued until active runs finish.')
+    this.name = 'ProfileReloadDeferred'
+  }
+}
+
 /**
  * Recompose the profile from its complete patch list, together with its runtime resolution. The rows the generation no
  * longer lists are removed first and their disposal finishes while their packages are still mapped; the latest
@@ -331,12 +356,31 @@ export function recomposeProfile(
  * @param patches Complete ordered patch list.
  * @param binName Diagnostic prefix.
  * @param requiredIds Explicit enablement targets whose existing failures also reject reconciliation.
+ * @param resumeDeferred Reenter the caller's reload queue when a Host resumes a deferred application.
  * @returns Diagnostics for unchanged pre-existing inactive entries; new or changed failures reject.
  */
 export async function reconcileProfilePatches(
   ctx: Context, patches: PatchOptions[], binName: string, requiredIds: readonly string[] = [],
+  resumeDeferred?: (apply: () => Promise<ProfileReloadOutcome>) => Promise<ProfileReloadOutcome>,
 ): Promise<string[]> {
-  return (await recompose(ctx, patches, binName, { requiredIds }, false)).warnings
+  const entry = bootstrapIncludes.get(ctx)
+  if (entry === undefined) throw new Error(`${binName}: profile reload requires the root Include entry`)
+  const { patches: previous = [], ...includeConfig } = entry.options.config as Include.Config
+  const parentURL = new URL('.', new URL(includeConfig.path, entry.parent.tree.ctx.baseUrl)).href
+  const prepared = prepareProfilePatches(ctx, patches, parentURL, binName)
+  const profile = ctx.get('profileContext')
+  let deferred = false
+  const apply = () => deferred && resumeDeferred !== undefined
+    ? resumeDeferred(() => recompose(ctx, patches, binName, { requiredIds }, false))
+    : recompose(ctx, patches, binName, { requiredIds }, false)
+  try {
+    return (profile !== undefined && !isDeepStrictEqual(previous, prepared)
+      ? await ctx.waterfall('app-boot/profile-reload', profile, apply)
+      : await apply()).warnings
+  } catch (error) {
+    if (error instanceof ProfileReloadDeferred) deferred = true
+    throw error
+  }
 }
 
 async function recompose(

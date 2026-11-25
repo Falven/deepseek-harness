@@ -64,4 +64,7 @@
 {"type":"feedback/message-put","data":{"sessionId":"{{parent}}","item":{"messageId":"{{message:1}}","rating":"negative","note":"Explain the result.","category":"task-result","version":"{{feedback-version:1}}","createdAt":0,"updatedAt":0}}}
 {"type":"feedback/message-put","data":{"sessionId":"{{parent}}","item":{"messageId":"{{message:1}}","rating":"positive","note":"The explanation is clear now.","version":"{{feedback-version:2}}","createdAt":0,"updatedAt":0}}}
 {"type":"feedback/message-delete","data":{"sessionId":"{{parent}}","messageId":"{{message:1}}"}}
+{"type":"tool/host-call","data":{"turn":null,"callId":"sdk-host-receipt","name":"snapshot_host_action","arguments":{"text":"host action complete"},"source":{"name":"SDK snapshot","actor":{"id":"snapshot-actor","name":"Snapshot actor"},"meta":{"origin":"host"}}}}
+{"type":"tool/host-dispatch","data":{"turn":null,"callId":"sdk-host-receipt"}}
+{"type":"tool/host-result","data":{"turn":null,"callId":"sdk-host-receipt","name":"snapshot_host_action","arguments":{"text":"host action complete"},"source":{"name":"SDK snapshot","actor":{"id":"snapshot-actor","name":"Snapshot actor"},"meta":{"origin":"host"}},"startedAt":0,"status":"completed","content":[{"type":"text","text":"host action complete"}],"isError":false,"value":"host action complete","meta":{"receipt":"saved"}}}
 {"type":"turn/end","data":{"turn":1,"reason":{"kind":"completed"}}}

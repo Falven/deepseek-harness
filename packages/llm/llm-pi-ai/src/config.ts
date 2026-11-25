@@ -251,6 +251,8 @@ export interface ResolvedPiAiProviderProfile
    * own, so a catalog capability must not appear here.
    */
   configuredMaxTokens: ReadonlyMap<string, number>
+  /** Per-model initial reasoning choices for selectors. */
+  configuredDefaultEfforts?: ReadonlyMap<string, ModelThinkingLevel>
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -337,6 +339,7 @@ const reasoningEfforts = z.dict(
 /** The fields a `models` entry and a `modelOverrides` value share; only the id's home differs. */
 const modelFields = {
   name: z.string(),
+  defaultEffort: z.union(THINKING_LEVELS),
   contextWindow: z.number().step(1).min(1),
   maxTokens: z.number().step(1).min(1),
   // No explicit default, unlike the route's `defaultInput`: schemastery
@@ -358,7 +361,8 @@ const modelProfile: z<PiAiModelProfile> = z.object({
 /** A {@link modelProfile} whose id lives in the `modelOverrides` dict key. */
 const modelOverride: z<PiAiModelOverride> = z.object(modelFields)
 
-const profile = z.object({
+/** Native provider fields reused by adapter plugins that extend authentication. */
+export const ProviderProfileSchema = z.object({
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -389,7 +393,7 @@ const profile = z.object({
 
 /** Runtime schema for {@link Config}. */
 export const Config = z.object({
-  providers: z.dict(profile).default({}).volatile(),
+  providers: z.dict(ProviderProfileSchema).default({}).volatile(),
 })
 
 /**
@@ -566,6 +570,10 @@ export function resolveProfiles(
       ...rest.headers === undefined ? {} : { headers: { ...rest.headers } },
       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
       configuredMaxTokens: catalog?.configuredMaxTokens ?? new Map(),
+      configuredDefaultEfforts: new Map(
+        (source.models ?? Object.entries(source.modelOverrides ?? {}).map(([id, value]) => ({ id, ...value })))
+          .flatMap(model => model.defaultEffort === undefined ? [] : [[model.id, model.defaultEffort]]),
+      ),
       modelErrors: catalog?.modelErrors ?? new Map(),
       ...piProvider === undefined ? {} : { piProvider },
       ...catalogError === undefined ? {} : { catalogError },

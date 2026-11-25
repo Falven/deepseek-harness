@@ -92,6 +92,7 @@ export class ToolExecutionPipeline {
 
   /** Definition-owned final content transform snapshotted before policy begins. */
   private contentFinalizers = new WeakMap<ToolRunContext, ToolDefinition['finalizeContent']>()
+  private metaFinalizers = new WeakMap<ToolRunContext, ToolDefinition['finalizeMeta']>()
 
   /** Execution-prepared content installed before post-execute policy. */
   private contentProjectors = new WeakMap<ToolRunContext, ToolDefinition['projectContent']>()
@@ -148,6 +149,7 @@ export class ToolExecutionPipeline {
     // Capture callbacks before argument getters run; rejected calls retain finalization only when aborted.
     const capturedFinalizer = visible?.finalizeContent?.bind(visible)
     const capturedProjector = visible?.projectContent?.bind(visible)
+    const capturedMetaFinalizer = visible?.finalizeMeta?.bind(visible)
     const finalizerFor = (): ToolDefinition['finalizeContent'] | undefined =>
       rejected && !signal.aborted ? undefined : capturedFinalizer
     try {
@@ -158,7 +160,10 @@ export class ToolExecutionPipeline {
       const execution: MutableToolRunContext = { ...base, arguments: deepFreeze(detached) }
       this.deferredContexts.set(execution, deferredContexts)
       this.contentFinalizers.set(execution, finalizerFor())
-      if (!rejected) this.contentProjectors.set(execution, capturedProjector)
+      if (!rejected) {
+        this.contentProjectors.set(execution, capturedProjector)
+        this.metaFinalizers.set(execution, capturedMetaFinalizer)
+      }
       this.cancellationStates.set(execution, {
         callerSignal: signal,
         bodyInvoked: false,
@@ -400,7 +405,9 @@ export class ToolExecutionPipeline {
     }
     let finalResult: ToolExecutionResult
     try {
-      finalResult = this.materializeFinalResult(this.applyFinalContent(exec, materializedResult))
+      const withContent = this.applyFinalContent(exec, materializedResult)
+      const meta = this.metaFinalizers.get(exec)?.(exec, withContent)
+      finalResult = this.materializeFinalResult(meta === undefined ? withContent : { ...withContent, meta })
     } catch (error: unknown) {
       finalResult = this.materializeFinalResult(toolErrorResult(error))
     }
@@ -729,7 +736,13 @@ function createExecutionToken(): ToolExecutionToken {
   return Symbol('dsh.tool.execution') as ToolExecutionToken
 }
 
-function toolErrorResult(error: unknown, info = errorInfo(error)): ToolExecutionResult {
+/**
+ * Convert an invocation-boundary failure into a native result.
+ * @param error - the boundary failure.
+ * @param info - explicit structured error identity when already known.
+ * @returns the normalized failure result.
+ */
+export function toolErrorResult(error: unknown, info = errorInfo(error)): ToolExecutionResult {
   const message = toolErrorMessage(error)
   return {
     content: [{ type: 'text', text: `Error: ${message}` }],

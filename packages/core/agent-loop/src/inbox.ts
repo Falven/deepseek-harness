@@ -12,6 +12,7 @@ import type {
   Inbox as InboxContract,
   InboxState,
   InboxTarget,
+  InputPurpose,
   InboxWireState,
 } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
@@ -103,43 +104,60 @@ export class ReactLoopInbox implements InboxContract {
    * Remove and return the complete batch proposed for one step.
    * @param target - whether this boundary also consumes one queued turn.
    * @param turn - turn that will own the claimed batch.
+   * @param proposed - exact prepared messages; later arrivals remain pending.
    * @returns next-step input followed by the queued turn, when requested.
    */
-  claim(target: InboxTarget, turn: number): UserMessage[] {
-    const claimed = this.mutate('next-step', 0, this.nextStep.length, [], false)
-    if (target === 'next-turn') claimed.push(...this.mutate('next-turn', 0, 1, [], false))
-    for (const message of claimed) this.dispatch.emit('agent/inbox/claimed', { message, turn })
-    return claimed
+  claim(target: InboxTarget, turn: number, proposed: readonly UserMessage[] = [
+    ...this.nextStep, ...(target === 'next-turn' ? this.nextTurn.slice(0, 1) : []),
+  ]): UserMessage[] {
+    // Preparation may await persistence while another user edits the queue.
+    // Check the complete batch before removing anything; later arrivals stay queued.
+    for (const message of proposed) {
+      const location = this.locate(message.id)
+      if (location === undefined || this.readState()[location.target][location.index] !== message) {
+        throw new Error('Pending input changed during preparation. Retry the queued instruction.')
+      }
+    }
+    for (const message of proposed) {
+      const location = this.locate(message.id)
+      if (location === undefined) throw new Error('Pending input changed during claiming. Retry the remaining queued input.')
+      this.mutate(location.target, location.index, 1, [], false)
+      this.dispatch.emit('agent/inbox/claimed', { message, turn })
+    }
+    return [...proposed]
   }
 
   /**
    * Append one message to a pending list.
    * @param target - pending list to extend.
    * @param message - message to append.
+   * @param purpose - producer-declared role; defaults to instruction.
    */
-  append(target: InboxTarget, message: UserMessage): void {
-    this.splice(target, this.readState()[target].length, 0, [message])
+  append(target: InboxTarget, message: UserMessage, purpose?: InputPurpose): void {
+    this.splice(target, this.readState()[target].length, 0, [message], purpose)
   }
 
   /**
    * Prepend one message to a pending list.
    * @param target - pending list to extend.
    * @param message - message to prepend.
+   * @param purpose - producer-declared role; defaults to instruction.
    */
-  prepend(target: InboxTarget, message: UserMessage): void {
-    this.splice(target, 0, 0, [message])
+  prepend(target: InboxTarget, message: UserMessage, purpose?: InputPurpose): void {
+    this.splice(target, 0, 0, [message], purpose)
   }
 
   /**
    * Replace one pending message in place.
    * @param messageId - identity of the pending message to replace.
    * @param newMessage - replacement message.
+   * @param purpose - producer-declared role; defaults to instruction.
    * @returns whether the message was still pending.
    */
-  replace(messageId: MessageId, newMessage: UserMessage): boolean {
+  replace(messageId: MessageId, newMessage: UserMessage, purpose?: InputPurpose): boolean {
     const location = this.locate(messageId)
     if (location === undefined) return false
-    this.splice(location.target, location.index, 1, [newMessage])
+    this.splice(location.target, location.index, 1, [newMessage], purpose)
     return true
   }
 
@@ -161,6 +179,7 @@ export class ReactLoopInbox implements InboxContract {
    * @param start - splice position.
    * @param deleteCount - maximum number of messages to remove.
    * @param inserted - messages to insert at the resolved position.
+   * @param purpose - producer-declared role; defaults to instruction.
    * @returns messages removed by the splice.
    */
   splice(
@@ -168,7 +187,9 @@ export class ReactLoopInbox implements InboxContract {
     start: number,
     deleteCount: number,
     inserted: UserMessage[],
+    purpose: InputPurpose = 'instruction',
   ): UserMessage[] {
+    for (const message of inserted) this.dispatch.admitInbox({ message, purpose })
     return this.mutate(target, start, deleteCount, inserted, true)
   }
 

@@ -65,7 +65,7 @@ export class BrowserTerminal {
    * @param failed - diagnostic sink for background cleanup failure.
    */
   monitor(policy: TerminalRetentionPolicy, closing: () => void, closed: () => void, failed: (error: unknown) => void): void {
-    this.retention = new TerminalRetention(policy, () => this.handle.inspectActivity(), async () => {
+    this.retention = new TerminalRetention(policy, options => this.handle.inspectActivity(options), async () => {
       closing()
       await this.closeProcess()
       closed()

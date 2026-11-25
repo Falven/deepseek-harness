@@ -1,6 +1,7 @@
 import { brandNumber, brandString, type Branded, type BrandedNumber } from '@deepseek-ai/dsh-brand'
 import type {
   AssistantMessage,
+  ContentBlock,
   DeveloperMessage,
   AssistantStreamRecord,
   ToolCallId,
@@ -288,6 +289,45 @@ export interface RequestContext {
  */
 export type RequestHeaderReason = 'initial' | 'resume' | 'change' | 'series'
 
+/** Authenticated actor identity supplied by the admitting Host. */
+export type HostActorId = Branded<'HostActorId'>
+
+/**
+ * Brand an identity verified by the Host's authentication provider.
+ * @param id - authenticated actor's durable identity.
+ * @returns the same value with the Host actor brand.
+ */
+export function HostActorId(id: string): HostActorId {
+  return brandString<HostActorId>(id)
+}
+
+/** Attribution supplied by a Host operation rather than a model turn. */
+export interface HostToolCallSource {
+  name: string
+  actor?: { id: HostActorId; name: string }
+  meta?: JsonValue
+}
+
+/** One accepted Host Tool invocation, independent of assistant coordinates. */
+export interface HostToolCallData {
+  turn: null
+  callId: ToolCallId
+  name: string
+  arguments: JsonValue
+  source: HostToolCallSource
+}
+
+/** Durable Host Tool outcome; unknown never implies safe automatic replay. */
+export interface HostToolResultData extends HostToolCallData {
+  startedAt: number
+  status: 'completed' | 'failed' | 'unknown' | 'not-dispatched'
+  content: ContentBlock[]
+  isError: boolean
+  value?: JsonValue
+  meta?: JsonValue
+  error?: { name: string; code: string; reason?: string }
+}
+
 /**
  * The merge-extensible, append-only source of truth for an agent interaction.
  * Message history is derived from this log. Every event is lossless JSON and
@@ -295,6 +335,12 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change' | 'series'
  * compact raw streams so persistence stores one durable settlement per attempt.
  */
 export interface SessionEventMap {
+  /** Host-admitted Tool evidence; log-only, never a model Tool request. */
+  'tool/host-call': HostToolCallData
+  /** Durable dispatch intent, flushed before entering the Tool body. */
+  'tool/host-dispatch': { turn: null; callId: ToolCallId }
+  /** Settlement of the same Host invocation; log-only. */
+  'tool/host-result': HostToolResultData
   /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no

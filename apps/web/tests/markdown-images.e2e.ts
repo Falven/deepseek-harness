@@ -211,7 +211,7 @@ describe('web e2e: Markdown image rendering', () => {
   })
 
   it('authenticates file requests and isolates directly opened active content', async () => {
-    const path = `/api/file?path=${encodeURIComponent(join(scaffold.workspaceCwd, 'active.html'))}`
+    const path = `/api/file?path=${encodeURIComponent(join(scaffold.workspaceCwd, 'active.html'))}&sessionId=${encodeURIComponent(SEED_ID)}`
     const unauthenticated = await fetch(new URL(path, scaffold.baseUrl))
     expect(unauthenticated.status).toBe(401)
     await unauthenticated.body?.cancel()

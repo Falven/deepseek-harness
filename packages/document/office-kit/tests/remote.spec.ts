@@ -35,6 +35,7 @@ let ctx: Context
 const target = { targetKey: 'office-source' as FsTarget['targetKey'], displayPath: source.absolutePath }
 const sourceInfo = { type: 'file' as const, version: source.version as FsInfo['version'], size: source.bytes }
 let read: ReturnType<typeof vi.fn<FileSystem['readBytes']>>
+let resolveFile: ReturnType<typeof vi.fn<FileSystem['resolve']>>
 let fileInfo: ReturnType<typeof vi.fn<FileSystem['stat']>>
 let processPath: ReturnType<typeof vi.fn<FileSystem['processPath']>>
 let authorize: ReturnType<typeof vi.fn<WorkspaceFiles['readBytes']>>
@@ -46,9 +47,10 @@ beforeEach(async () => {
   outputDirectory = await mkdtemp(join(tmpdir(), 'dsh-office-kit-outputs-'))
   ctx = new Context()
   read = vi.fn<FileSystem['readBytes']>().mockResolvedValue(rawSource.data)
+  resolveFile = vi.fn<FileSystem['resolve']>().mockResolvedValue(target)
   fileInfo = vi.fn<FileSystem['stat']>().mockResolvedValue(sourceInfo)
   processPath = vi.fn<FileSystem['processPath']>().mockReturnValue(source.absolutePath)
-  ctx.provide('fs', { resolve: vi.fn().mockResolvedValue(target), stat: fileInfo, processPath, readBytes: read } as never)
+  ctx.provide('fs', { resolve: resolveFile, stat: fileInfo, processPath, readBytes: read } as never)
   authorize = vi.fn<WorkspaceFiles['readBytes']>().mockResolvedValue({ ...wireSource, eof: false, data: rawSource.data.subarray(0, 1) })
   metadata = vi.fn<WorkspaceFiles['stat']>().mockResolvedValue(source)
   await ctx.plugin(OfficeKit, { outputDirectory })
@@ -69,6 +71,10 @@ it.each(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'])('converts authorized %s b
   const path = `report.${extension.toUpperCase()}`
   const result = await ctx.officeKit.render(scope, path, 'foreground', new AbortController().signal)
   expect(read).toHaveBeenCalledExactlyOnceWith(target, expect.any(AbortSignal), 4)
+  expect(resolveFile).toHaveBeenCalledOnce()
+  expect(resolveFile.mock.calls[0]?.[0]).toBe(source.absolutePath)
+  expect(resolveFile.mock.calls[0]?.[1]?.cwd).toBe(scope.workspaceRoot)
+  expect(resolveFile.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
   expect(authorize).toHaveBeenCalledExactlyOnceWith(scope, path, { range: { offset: 0, length: 1 } }, expect.any(AbortSignal))
   expect(render).toHaveBeenCalledOnce()
   expect(render.mock.calls[0]?.[0]).toMatchObject({ extension, priority: 'foreground', source: { version: source.version, bytes: 4 } })

@@ -34,10 +34,13 @@ export const inject = ['webServer', 'connection']
 export interface Config {
   /** Absolute path of index.html inside the dist root. */
   distIndex: string
+  /** Additional SPA entry paths served as the same index. */
+  indexPaths?: string[]
 }
 
 export const Config: z<Config> = z.object({
   distIndex: z.string().required(),
+  indexPaths: z.array(z.string()).default([]),
 })
 
 const HTML_MIME = 'text/html; charset=utf-8'
@@ -52,6 +55,11 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
   '.map': 'application/json',
   '.webmanifest': 'application/manifest+json',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.wasm': 'application/wasm',
   // The packed VFS image. Served as its own bytes, never as a Content-Encoding:
   // the worker inflates the body itself, and a transport-level encoding would
   // leave it inflating an already-decoded archive.
@@ -80,17 +88,14 @@ function bytesBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * failure other than a missing or non-file target rejects.
  * @param request - the request; only its method and URL path are read.
  * @param distRoot - absolute dist root directory (resolved by the caller).
- * @param distIndex - absolute path of index.html inside distRoot.
- * @param renderIndex - present for index requests to turn the raw index.html
- * into the served document; omitted for ordinary static files.
+ * @param renderIndex - returns the rendered document for an index request; omitted for static files.
  * @returns the dist response; a HEAD response carries the GET status and
  * headers without a body. A file other than the index carries
  * `cache-control: no-cache` and a weak ETag from a SHA-1 of its bytes, and a
  * request whose `If-None-Match` equals that ETag receives an empty 304.
  */
-async function serveStatic(
-  request: Request, distRoot: string, distIndex: string,
-  renderIndex?: (html: string) => string,
+export async function serveStatic(
+  request: Request, distRoot: string, renderIndex?: () => Promise<string>,
 ): Promise<Response> {
   const target = resolve(normalize(join(distRoot, decodeURIComponent(new URL(request.url).pathname))))
   // Traversal rejection: the target must be distRoot itself (`/`) or stay under
@@ -101,9 +106,7 @@ async function serveStatic(
   let headers: Record<string, string>
   try {
     if (renderIndex !== undefined) {
-      const html = await readFile(distIndex, 'utf8')
-      request.signal.throwIfAborted()
-      body = renderIndex(html)
+      body = await renderIndex()
       headers = { 'content-type': HTML_MIME }
     } else {
       body = await readFile(target)
@@ -130,6 +133,16 @@ async function serveStatic(
 export function apply(ctx: Context, config: Config): void {
   const distIndex = config.distIndex
   const distRoot = dirname(distIndex)
+  const serveIndex = (request: Request, peer: PeerScope | undefined, base: string): Promise<Response> => {
+    if (peer === undefined) throw new Error('frontend-static: index requires an admitted Peer')
+    return serveStatic(request, distRoot, async () => {
+      const html = await readFile(distIndex, 'utf8')
+      request.signal.throwIfAborted()
+      peer.signal.throwIfAborted()
+      return ctx.webServer.renderIndex(html, peer)
+        .replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="${base}">`)
+    })
+  }
   ctx.effect(() => ctx.webServer.registerFallback({
     auth: (request) => {
       const target = resolve(normalize(join(distRoot, decodeURIComponent(request.url.pathname))))
@@ -138,16 +151,16 @@ export function apply(ctx: Context, config: Config): void {
     resource: (request, peer) => {
       request.signal.throwIfAborted()
       const target = resolve(normalize(join(distRoot, decodeURIComponent(new URL(request.url).pathname))))
-      if (target !== distRoot && target !== distIndex) return serveStatic(request, distRoot, distIndex)
-      // WebServer admits every index request before invoking this resource.
-      const pagePeer = peer as PeerScope
-      const render = (html: string): string => {
-        request.signal.throwIfAborted()
-        pagePeer.signal.throwIfAborted()
-        return ctx.webServer.renderIndex(html, pagePeer)
-          .replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="./">`)
-      }
-      return serveStatic(request, distRoot, distIndex, render)
+      if (target !== distRoot && target !== distIndex) return serveStatic(request, distRoot)
+      return serveIndex(request, peer, './')
     },
   }), 'frontend-static: fallback seat')
+  for (const path of config.indexPaths ?? []) {
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'exact',
+      path,
+      auth: 'required',
+      resource: (request, peer) => serveIndex(request, peer, '/'),
+    }), `frontend-static: ${path} index alias`)
+  }
 }

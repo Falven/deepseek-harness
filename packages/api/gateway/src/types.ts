@@ -4,8 +4,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { IncomingMessage } from 'node:http'
 import type { PeerScope, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
-import type { RemoteEventAgentId, RemoteEventHostInfo } from './stream-protocol.ts'
+import type { RemoteEventAgentId, RemoteEventHostInfo, RemoteEventId } from './stream-protocol.ts'
 
 /** One Remote method request after a carrier has decoded its envelope. */
 export interface InvokeRemoteRequest {
@@ -72,6 +73,15 @@ export interface TypertRemoteEventInvocation {
   readonly resolve: (outcome: TypertRemoteEventOutcome) => void
   /** Reject the source's Cordis listener after cancellation, transport failure, or Client rejection. */
   readonly reject: (reason: unknown) => void
+}
+
+/** The winning Client result before the originating Host waterfall resumes. */
+export interface TypertRemoteEventResult
+  extends Pick<TypertRemoteEventInvocation, 'event' | 'request' | 'context'> {
+  /** Gateway-assigned identity of the pending Remote event. */
+  readonly eventId: RemoteEventId
+  /** Value returned by the winning Client listener. */
+  readonly value: unknown
 }
 
 /** Notification or scoped waterfall accepted from the sole Remote Event source. */
@@ -192,6 +202,21 @@ export interface TypertGateway {
 }
 
 declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Scope each WebSocket logical stream to its admitted HTTP upgrade request.
+     * @param request - HTTP request that established the logical stream.
+     * @mode waterfall
+     */
+    'typert-gateway/stream-request'(request: IncomingMessage, next: () => Promise<void>): Promise<void>
+
+    /**
+     * Admit the winning Client result before resolving its Host waterfall.
+     * @param result - original event and winning value.
+     * @mode serial
+     */
+    'typert-gateway/remote-event-result'(result: TypertRemoteEventResult): Promise<void>
+  }
   interface Context {
     /** Host dispatcher for Typert Remote calls. */
     typertGateway: TypertGateway

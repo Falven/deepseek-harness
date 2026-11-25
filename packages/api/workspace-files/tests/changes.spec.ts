@@ -107,22 +107,22 @@ async function ownedEndpoint() {
 }
 
 describe('workspaceFiles.changes — target frames', () => {
-  it('acknowledges readiness before draining target observations queued during root resolution', async () => {
+  it('acknowledges readiness before draining target observations queued during target resolution', async () => {
     const path = join(harness.workspace, 'early.txt')
     await writeFile(path, 'current contents')
     const service = harness.endpoint()
     const current = await service.stat(harness.scope, path, new AbortController().signal)
     const fs = harness.ctx.fs
     const resolve = fs.resolve.bind(fs)
-    const root = await resolve(harness.workspace)
+    const target = await resolve(path)
     const entered = Promise.withResolvers<AbortSignal | undefined>()
     const release = Promise.withResolvers<undefined>()
     vi.spyOn(fs, 'resolve').mockImplementation(async (requested, options) => {
-      if (requested !== harness.workspace) return resolve(requested, options)
+      if (requested !== path) return resolve(requested, options)
       entered.resolve(options?.signal)
       await release.promise
       options?.signal?.throwIfAborted()
-      return root
+      return target
     })
     const stream = open(service, path)
     const acknowledged = vi.fn()
@@ -131,8 +131,8 @@ describe('workspaceFiles.changes — target frames', () => {
       const lifetime = await entered.promise
       expect(lifetime).toBeInstanceOf(AbortSignal)
       expect(lifetime?.aborted).toBe(false)
-      await observe(path, present('old-observation'))
-      await observe(path, { kind: 'absent' })
+      harness.ctx.emit('fs/observed', target, present('old-observation'), undefined)
+      harness.ctx.emit('fs/observed', target, { kind: 'absent' }, undefined)
       expect(acknowledged).not.toHaveBeenCalled()
       expect(watch).not.toHaveBeenCalled()
       release.resolve(undefined)
@@ -402,12 +402,10 @@ describe('workspaceFiles.changes — backends and access', () => {
     }
   })
 
-  it('rejects an outside directory before opening a watcher', async () => {
+  it('watches an outside directory under the same read authority', async () => {
     const stream = open(harness.endpoint(), harness.outside)
-    await expect(failureOf(stream.next())).resolves.toEqual({
-      code: 'workspace-file/outside-workspace', details: { path: harness.outside },
-    })
-    expect(watch).not.toHaveBeenCalled()
+    await ready(stream)
+    expect(watch).toHaveBeenCalledTimes(1)
   })
 
   it('allows an outside file under the same read authority', async () => {
@@ -429,7 +427,7 @@ describe('workspaceFiles.changes — backends and access', () => {
     })
   })
 
-  it('rejects and closes an outside target when a later stat finds a directory', async () => {
+  it('continues watching an outside target when it becomes a directory', async () => {
     const path = join(harness.outside, 'changed-kind')
     await writeFile(path, 'initial file')
     const stat = vi.spyOn(harness.ctx.fs, 'stat')
@@ -441,12 +439,11 @@ describe('workspaceFiles.changes — backends and access', () => {
     await mkdir(path)
     const pending = stream.next()
     changed()
-    await expect(failureOf(pending)).resolves.toEqual({
-      code: 'workspace-file/outside-workspace', details: { path },
+    await expect(pending).resolves.toMatchObject({
+      done: false, value: { kind: 'change', change: { absolutePath: harness.ctx.fs.processPath(target) } },
     })
     expect(stat.mock.calls).toEqual([[target, signal], [target, signal]])
-    expect(unwatch).toHaveBeenCalledTimes(1)
-    await expect(stream.next()).resolves.toEqual({ done: true, value: undefined })
+    expect(unwatch).not.toHaveBeenCalled()
   })
 
   it('observes creation of a missing outside file through the real local watcher', async () => {
@@ -535,23 +532,23 @@ describe('workspaceFiles.changes — backends and access', () => {
 })
 
 describe('workspaceFiles.changes — cancellation and disposal', () => {
-  it('does not acknowledge a generation disposed while root resolution is blocked', async () => {
+  it('does not acknowledge a generation disposed while target resolution is blocked', async () => {
     const fs = harness.ctx.fs
     const resolve = fs.resolve.bind(fs)
-    const root = await resolve(harness.workspace)
+    const target = await resolve(harness.workspace)
     const entered = Promise.withResolvers<AbortSignal | undefined>()
     const release = Promise.withResolvers<undefined>()
     vi.spyOn(fs, 'resolve').mockImplementationOnce(async (_path, options) => {
       entered.resolve(options?.signal)
       await release.promise
-      return root
+      return target
     })
     const owner = await ownedEndpoint()
     const stream = open(owner.service, harness.workspace)
     const first = stream.next()
     try {
       const lifetime = await entered.promise
-      if (lifetime === undefined) throw new Error('Root resolution received no cancellation signal')
+      if (lifetime === undefined) throw new Error('Target resolution received no cancellation signal')
       const aborted = Promise.withResolvers<undefined>()
       lifetime.addEventListener('abort', () => { aborted.resolve(undefined) }, { once: true })
       const finished = vi.fn()
@@ -647,37 +644,33 @@ describe('workspaceFiles.changes — cancellation and disposal', () => {
     expect(unwatch).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['root', 'target'] as const)(
-    'ends quietly when %s resolution rejects after cancellation',
-    async (phase) => {
-      const fs = harness.ctx.fs
-      const resolve = fs.resolve.bind(fs)
-      const path = join(harness.workspace, 'cancelled.txt')
-      const entered = Promise.withResolvers<AbortSignal | undefined>()
-      const release = Promise.withResolvers<undefined>()
-      vi.spyOn(fs, 'resolve').mockImplementation(async (requested, options) => {
-        const blocked = phase === 'root' ? harness.workspace : path
-        if (requested !== blocked) return resolve(requested, options)
-        entered.resolve(options?.signal)
-        await release.promise
-        options?.signal?.throwIfAborted()
-        return resolve(requested, options)
-      })
-      const stream = open(harness.endpoint(), path)
-      const pending = stream.next()
-      try {
-        const lifetime = await entered.promise
-        expect(lifetime?.aborted).toBe(false)
-        stream.controller.abort()
-        expect(lifetime?.aborted).toBe(true)
-        release.resolve(undefined)
-        await expect(pending).resolves.toEqual({ done: true, value: undefined })
-        expect(watch).not.toHaveBeenCalled()
-      } finally {
-        release.resolve(undefined)
-      }
-    },
-  )
+  it('ends quietly when target resolution rejects after cancellation', async () => {
+    const fs = harness.ctx.fs
+    const resolve = fs.resolve.bind(fs)
+    const path = join(harness.workspace, 'cancelled.txt')
+    const entered = Promise.withResolvers<AbortSignal | undefined>()
+    const release = Promise.withResolvers<undefined>()
+    vi.spyOn(fs, 'resolve').mockImplementation(async (requested, options) => {
+      if (requested !== path) return resolve(requested, options)
+      entered.resolve(options?.signal)
+      await release.promise
+      options?.signal?.throwIfAborted()
+      return resolve(requested, options)
+    })
+    const stream = open(harness.endpoint(), path)
+    const pending = stream.next()
+    try {
+      const lifetime = await entered.promise
+      expect(lifetime?.aborted).toBe(false)
+      stream.controller.abort()
+      expect(lifetime?.aborted).toBe(true)
+      release.resolve(undefined)
+      await expect(pending).resolves.toEqual({ done: true, value: undefined })
+      expect(watch).not.toHaveBeenCalled()
+    } finally {
+      release.resolve(undefined)
+    }
+  })
 
   it('does not open a watcher after target resolution returns past cancellation', async () => {
     const fs = harness.ctx.fs
@@ -769,13 +762,12 @@ describe('workspaceFiles.changes — cancellation and disposal', () => {
     },
   )
 
-  it.each(['root', 'target'] as const)('surfaces a %s resolution failure unrelated to cancellation', async (phase) => {
+  it('surfaces a target resolution failure unrelated to cancellation', async () => {
     const failure = new Error('Path resolution failed')
     const path = join(harness.workspace, 'unresolved.txt')
-    const failedPath = phase === 'root' ? harness.workspace : path
     const resolve = harness.ctx.fs.resolve.bind(harness.ctx.fs)
     vi.spyOn(harness.ctx.fs, 'resolve').mockImplementation(async (requested, options) => {
-      if (requested === failedPath) throw failure
+      if (requested === path) throw failure
       return resolve(requested, options)
     })
     const stat = vi.spyOn(harness.ctx.fs, 'stat')

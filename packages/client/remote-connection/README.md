@@ -87,10 +87,10 @@ Register in the root-scoped list `settings.remoteConnection.extensions` to add o
 ```ts client
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { FunctionComponent } from 'react'
+import type { ReactNode } from 'react'
 import type { RemoteConnectionExtensionProps } from '@deepseek-ai/dsh-client-remote-connection/client'
 
-declare const ConnectionOptions: FunctionComponent<RemoteConnectionExtensionProps>
+declare function ConnectionOptions(props: RemoteConnectionExtensionProps): ReactNode
 
 export const inject = ['slots']
 
@@ -112,10 +112,10 @@ Register a replacement component from your Client plugin with a lower priority t
 ```ts client
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { FunctionComponent } from 'react'
+import type { ReactNode } from 'react'
 import type { RemoteConnectionContentProps } from '@deepseek-ai/dsh-client-remote-connection/client'
 
-declare const CustomPanel: FunctionComponent<RemoteConnectionContentProps>
+declare function CustomPanel(props: RemoteConnectionContentProps): ReactNode
 
 export const inject = ['slots']
 

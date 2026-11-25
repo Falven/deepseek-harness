@@ -77,9 +77,11 @@ kind: "package-reference"
 
 ### 为服务器管理器提供宿主
 
-在运行时管理服务器的插件（例如 [MCP 管理器](../mcp-manager/README.zh.md)）用 `new McpClientHost(ctx)` 创建自己的 `McpClientHost`。宿主提供 `ctx.mcpClientHost`，这是此类插件使用本包的唯一途径：它校验服务器配置、挂载服务器实例、探测服务器，并创建显式 OAuth 授权所有者。宿主挂载的实例运行在该插件的 Fiber 下，随它结束。
+在运行时管理服务器的插件（例如 [MCP 管理器](../mcp-manager/README.zh.md)）用 `new McpClientHost(ctx)` 创建自己的 `McpClientHost`。宿主提供 `ctx.mcpClientHost` 以校验服务器配置、挂载服务器实例、探测服务器，并创建显式 OAuth 授权所有者。宿主挂载的实例运行在该插件的 Fiber 下，随它结束。
 
 `validate` 用各传输自己的 schema 解析服务器配置，并拒绝无效的模板 token、重连策略，以及与 `Authorization` 请求头同时配置的 OAuth，因此每条拒绝都会在调用方传入的配置路径后点名字段。
+
+负责单次调用凭据或 MCP App 能力的宿主可以调用 `startConnection`，提供传输和工具适配器。宿主自行注册 ServerContext，并在替换连接之前等待其释放。由适配器提供的传输无法使用原生 OAuth 流程。
 
 ### 工具命名与共存
 
@@ -166,7 +168,7 @@ kind: "package-reference"
 | [`src/oauth.ts`](src/oauth.ts) | 显式浏览器授权：回调、流程与进行中的工作共用一个所有者 |
 | [`src/types.ts`](src/types.ts) | 客户端可用的连接状态、探测结果与 OAuth 尝试类型（`./types`） |
 
-导出的 `createMcpToolDefinition(ctx, options)` 将上游工具 schema 和原始结果回调适配到相同的规范值、错误和持久化图像投影。每次回调都收到原样的 `ToolExecution`，包括其 Agent 和取消信号；SDK 的规范类型校验会在投影前检查返回结果。调用方负责注册、取消截止时间和提供方卸载。原生 Cua Driver 提供方使用此适配函数，无需打开 MCP 传输。
+导出的 `createMcpToolDefinition(ctx, options)` 将上游工具 schema 和原始结果回调适配到相同的规范值、错误和持久化图像投影。设置 `retainProtocolResult` 后，它还会在策略执行后把通过验证的完整 MCP 结果保留在私有最终元数据中，包括标准 MCP 错误，而不改变程序使用的规范值。每次回调都收到原样的 `ToolExecution`，包括其 Agent 和取消信号；SDK 的规范类型校验会在投影前检查返回结果。调用方负责注册、取消截止时间和提供方卸载。原生 Cua Driver 提供方使用此适配函数，无需打开 MCP 传输。
 
 ### 生命周期与同步
 

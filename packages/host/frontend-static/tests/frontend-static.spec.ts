@@ -82,6 +82,8 @@ async function loadComposition(): Promise<Context> {
     "  name: '@deepseek-ai/dsh-host-frontend-static'",
     '  config:',
     `    distIndex: '${distIndex}'`,
+    '    indexPaths:',
+    '      - /configuration/server',
     '',
   ].join('\n'))
 
@@ -205,6 +207,9 @@ describe('real Loader composition', () => {
     expect(admission.peer).not.toBe(loaded.connection.browserPeer)
     expect(renderedFor).toEqual([admission.peer, admission.peer, admission.peer, admission.peer])
     offRows()
+    const deep = await request(port, '/configuration/server', authenticated())
+    expect(deep.status).toBe(200)
+    expect(deep.body).toContain('<base href="/">')
     expect(await request(port, '/', authenticated({ method: 'HEAD' }))).toEqual({
       status: 200,
       type: 'text/html; charset=utf-8',

@@ -23,7 +23,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { describeError, McpLocalError, mcpRequestError, McpToolError } from './diagnostic.ts'
 import type { McpToolLoader } from './tool-loading.ts'
 
@@ -42,6 +42,10 @@ export interface ToolBridgeOptions {
   redact?: (text: string) => string
   /** On-demand loading: the generation is published to this loader instead of the tool registry. */
   loader?: McpToolLoader
+  /** Provide invocation-scoped credentials while retaining the native SDK request. */
+  withClient?: <T>(client: Client, execution: ToolExecution, run: (client: Client) => Promise<T>) => Promise<T>
+  /** Adapt a discovered descriptor or leave it out of the model tools. */
+  toolDefinition?: (tool: Tool, options: McpToolDefinitionOptions) => ToolDefinition | undefined
 }
 
 /**
@@ -150,17 +154,19 @@ export async function syncTools(
 ): Promise<ToolDisposers> {
   // Phase 1: fetch and build the next generation without touching the registry.
   const definitions = new Map<string, { rawName: string; definition: ToolDefinition }>()
+  const names = new Set<string>()
   const response = client.getServerCapabilities()?.tools === undefined
     ? { tools: [] }
     : await client.listTools(undefined, { cacheMode: 'refresh', signal: opts.signal })
   const outputValidators = new AjvJsonSchemaValidator()
   for (const tool of response.tools) {
     const publicName = publicToolName(opts.serverName, tool.name)
-    if (definitions.has(publicName)) {
+    if (names.has(publicName)) {
       throw new Error(
         `mcp-client(${opts.serverName}): server listed tool "${tool.name}" more than once — invalid tool list`,
       )
     }
+    names.add(publicName)
     if (publicName === opts.loader?.name) {
       ctx.logger.warn(`mcp-client(${opts.serverName}): server tool "${tool.name}" is not offered because its name is the on-demand loader's`)
       continue
@@ -173,7 +179,7 @@ export async function syncTools(
       const message = `Tool "${tool.name}" returned an invalid MCP result: ${reason}`
       return new McpToolError(opts.redact === undefined ? message : opts.redact(message), 'MCP_INVALID_RESULT')
     }
-    definitions.set(publicName, { rawName: tool.name, definition: createMcpToolDefinition(ctx, {
+    const options: McpToolDefinitionOptions = {
       name: publicName,
       rawName: tool.name,
       description: tool.description ?? '',
@@ -190,11 +196,12 @@ export async function syncTools(
         }
         let result: Awaited<ReturnType<Client['callTool']>>
         try {
-          result = await client.callTool(
+          const run = (connection: Client) => connection.callTool(
             { name: tool.name, arguments: args },
             { signal: AbortSignal.any([execution.signal, opts.signal]),
               timeout: opts.toolCallTimeoutMs, toolDefinition: callDefinition },
           )
+          result = await (opts.withClient === undefined ? run(client) : opts.withClient(client, execution, run))
         } catch (error) {
           // The SDK reports an aborted signal as a request timeout; cancellation
           // and generation closure are reported as their own reasons instead.
@@ -210,7 +217,11 @@ export async function syncTools(
         if (opts.redact === undefined) return result
         return { isError: true, content: [{ type: 'text', text: opts.redact(extractText(result.content as JsonValue[], tool.name)) }] }
       },
-    }) })
+    }
+    const definition = opts.toolDefinition === undefined
+      ? createMcpToolDefinition(ctx, options)
+      : opts.toolDefinition(tool, options)
+    if (definition !== undefined) definitions.set(publicName, { rawName: tool.name, definition })
   }
 
   // Phase 2: swap generations — but only for a generation still entitled to
@@ -309,6 +320,8 @@ function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
 
 /** One upstream MCP tool and the callback that obtains its raw protocol result. */
 export interface McpToolDefinitionOptions {
+  /** Retain the complete protocol result in private Host metadata after policy. */
+  retainProtocolResult?: boolean
   /** ToolRuntime name presented to the model. */
   name: string
   /** Upstream name used in result diagnostics. */
@@ -343,12 +356,22 @@ export function createMcpToolDefinition(
 ): ToolDefinition {
   const { name, rawName, description, inputSchema } = options
   const projections = new WeakMap<ToolExecution, PreparedProjection>()
+  const retained = new WeakMap<ToolExecution, RetainedResult>()
   return {
     name,
     description,
     parameters: inputSchema,
     output: createOutput(rawName, supportedOutputSchema(options.outputSchema)),
-    execute: createExecutor(ctx, options, projections),
+    execute: createExecutor(ctx, options, projections, retained),
+    finalizeMeta(exec, result) {
+      const entry = retained.get(exec)
+      if (entry === undefined) return undefined
+      retained.delete(exec)
+      if (entry.kind === 'error') {
+        if (!result.isError || result.error.info?.code !== 'MCP_TOOL_ERROR') return undefined
+      } else if (result.isError || !isDeepStrictEqual(entry.value, result.value)) return undefined
+      return { mcpResult: entry.protocol }
+    },
     projectContent(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) {
       const projection = projections.get(exec)
       if (projection === undefined) return undefined
@@ -360,6 +383,10 @@ export function createMcpToolDefinition(
     },
   }
 }
+
+type RetainedResult = { protocol: JsonValue } & (
+  { kind: 'error' } | { kind: 'value'; value: McpResult }
+)
 
 /** Build the canonical result schema and existing Native text projection. */
 function createOutput(rawName: string, structuredSchema: JsonSchemaNode | undefined): ToolDefinition['output'] {
@@ -388,6 +415,7 @@ function createExecutor(
   ctx: Context,
   options: McpToolDefinitionOptions,
   projections: WeakMap<ToolExecution, PreparedProjection>,
+  retained: WeakMap<ToolExecution, RetainedResult>,
 ): ToolDefinition['execute'] {
   const { rawName, taskRequired } = options
   return async (args: unknown, exec: ToolExecution) => {
@@ -404,12 +432,17 @@ function createExecutor(
       throw new McpToolError(`Tool "${rawName}" returned an invalid MCP result: ${parsed.issues.map(issue => issue.message).join('; ')}`, 'MCP_INVALID_RESULT')
     }
     const result = parsed.value
+    const protocol = options.retainProtocolResult ? snapshotJsonValue(result as JsonValue) : undefined
+    if (options.retainProtocolResult && protocol === undefined) {
+      throw new McpToolError(`Tool "${rawName}" returned a non-JSON MCP result`, 'MCP_INVALID_RESULT')
+    }
 
     const content = result.content as unknown as JsonValue[]
     const text = extractText(content, rawName)
 
     // MCP isError → throw so ToolRuntime produces an isError result for the model.
     if (result.isError === true) {
+      if (protocol !== undefined) retained.set(exec, { kind: 'error', protocol })
       throw new McpToolError(text, 'MCP_TOOL_ERROR')
     }
 
@@ -419,7 +452,10 @@ function createExecutor(
         ? { structuredContent: result.structuredContent as JsonValue }
         : {},
     }
-    if (!containsImage(content)) return value
+    if (!containsImage(content)) {
+      if (protocol !== undefined) retained.set(exec, { kind: 'value', protocol, value })
+      return value
+    }
     const fallback: ContentBlock[] = [{ type: 'text', text: extractText(content, rawName) }]
     const { content: projected, attachments } = await prepareImageProjection(ctx, exec, content, rawName)
     const admitted: McpResult = attachments === undefined ? value : {
@@ -430,6 +466,7 @@ function createExecutor(
       }),
     }
     projections.set(exec, { value: admitted, fallback, content: projected })
+    if (protocol !== undefined) retained.set(exec, { kind: 'value', protocol, value: admitted })
     return admitted
   }
 }

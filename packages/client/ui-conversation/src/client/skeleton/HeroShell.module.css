@@ -3,7 +3,7 @@
    geometry and the chip live here. */
 
 .root {
-  display: flex;
+  display: var(--dsh-hero-chrome-display, flex);
   align-items: center;
   justify-content: center;
   height: 100%;

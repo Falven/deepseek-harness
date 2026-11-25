@@ -231,7 +231,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-gateway`
 
 - `inject`: `typert` · `remoteAccess`
-- `source`: [`packages/api/gateway/src/index.ts:158`](../packages/api/gateway/src/index.ts)
+- `source`: [`packages/api/gateway/src/index.ts:159`](../packages/api/gateway/src/index.ts)
 
 ```ts config-catalog
 /** Gateway transport configuration. */
@@ -276,11 +276,13 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-session-controller`
 
 - `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `typertGateway` · `workspaceRegistry`
-- `source`: [`packages/api/session-controller/src/index.ts:83`](../packages/api/session-controller/src/index.ts)
+- `source`: [`packages/api/session-controller/src/index.ts:101`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
 /** Session Controller deployment policy. */
 export interface Config {
+  /** Directory for a new Session with no explicit Workspace or cwd. */
+  readonly defaultCwd?: string
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
   /** Positive integral milliseconds of list work before yielding between complete rows. */
@@ -310,7 +312,7 @@ export interface SettingsControllerInternals {
 
 ## `@deepseek-ai/dsh-api-terminal-controller`
 
-- `inject`: `subprocess` · `sandboxPolicy` · `workingDirectory` · `typert`
+- `inject`: `agents` · `subprocess` · `sandboxPolicy` · `workingDirectory` · `typert`
 - `source`: [`packages/api/terminal-controller/src/index.ts:32`](../packages/api/terminal-controller/src/index.ts)
 
 ```ts config-catalog
@@ -367,6 +369,8 @@ export interface Config {
 ```ts config-catalog
 /** First-use directory policy for the Host account. */
 export interface Config {
+  /** Explicit first-use Workspace directory supplied by a distribution. */
+  defaultDirectory?: string
   /** Override the system Documents directory with a fully qualified path. */
   documentsDirectory?: string
   /** Maximum duration of the operating system's Documents lookup. */
@@ -381,7 +385,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-workspace-files`
 
 - `inject`: `fs` · `sandboxPolicy` · `sessions` · `typert`
-- `source`: [`packages/api/workspace-files/src/index.ts:100`](../packages/api/workspace-files/src/index.ts)
+- `source`: [`packages/api/workspace-files/src/index.ts:121`](../packages/api/workspace-files/src/index.ts)
 
 ```ts config-catalog
 /** Deployment caps on one page, one listing, or one search. */
@@ -549,6 +553,8 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /** Allow the mandatory application gate to admit a Web request without a native credential. */
+  authMode?: 'launch-token' | 'external'
 }
 
 /** Timing for generation readiness and automatic reconnection. */
@@ -789,6 +795,8 @@ export type Config = ModelsConfig
 
 /** Credential-onboarding choice; the browser receives it through its synced Config. */
 export interface ModelsConfig {
+  /** Mount Web onboarding steps when the Client activates; defaults to true. */
+  onboarding?: Volatile<boolean>
   /** Offer the browser API-key step automatically when no native shell owns credential onboarding. */
   credentialOnboarding: Volatile<boolean>
 }
@@ -964,7 +972,7 @@ export interface ToolResultPruneConfig {
 ## `@deepseek-ai/dsh-cordis-host-runner`
 
 - `inject`: `tools`
-- `source`: [`packages/extensions/cordis-host-runner/src/index.ts:107`](../packages/extensions/cordis-host-runner/src/index.ts)
+- `source`: [`packages/extensions/cordis-host-runner/src/index.ts:116`](../packages/extensions/cordis-host-runner/src/index.ts)
 
 ```ts config-catalog
 /** Runner configuration. */
@@ -1798,7 +1806,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-file-reference-local`
 
 - `inject`: `agents` · `workingDirectory`
-- `source`: [`packages/context/file-reference-local/src/index.ts:27`](../packages/context/file-reference-local/src/index.ts)
+- `source`: [`packages/context/file-reference-local/src/index.ts:28`](../packages/context/file-reference-local/src/index.ts)
 
 ```ts config-catalog
 /** Local file-reference discovery configuration. */
@@ -2083,6 +2091,8 @@ export interface Config {
 export interface Config {
   /** Absolute path of index.html inside the dist root. */
   distIndex: string
+  /** Additional SPA entry paths served as the same index. */
+  indexPaths?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-host-frontend-static -->
@@ -2161,7 +2171,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-host-webserver`
 
-- `source`: [`packages/host/webserver/src/index.ts:171`](../packages/host/webserver/src/index.ts)
+- `source`: [`packages/host/webserver/src/index.ts:179`](../packages/host/webserver/src/index.ts)
 
 ```ts config-catalog
 /** Web server listen, TLS, and response-compression config. */
@@ -2193,6 +2203,8 @@ export interface Config {
   compressionLevel?: number
   /** Minimum known response length eligible for gzip; unknown-length streams are eligible. @default 1024 */
   compressionThresholdBytes?: number
+  /** Reject all traffic until an application admission provider is registered. @default false */
+  externalAdmission?: boolean
 }
 
 /**
@@ -2300,7 +2312,7 @@ export interface Config extends ProtocolConfig, ModelListingConfig {
 
 - `inject`: `llm`
 - `refs`: `Api` (`@earendil-works/pi-ai`) · `CacheRetention` (`@earendil-works/pi-ai`) · `Model` (`@earendil-works/pi-ai`) · `ModelThinkingLevel` (`@earendil-works/pi-ai`) · `OpenAICompletionsCompat` (`@earendil-works/pi-ai`) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · `ThinkingBudgets` (`@earendil-works/pi-ai`) · `Transport` (`@earendil-works/pi-ai`) · `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/llm/llm-pi-ai/src/config.ts:257`](../packages/llm/llm-pi-ai/src/config.ts)
+- `source`: [`packages/llm/llm-pi-ai/src/config.ts:259`](../packages/llm/llm-pi-ai/src/config.ts)
 
 ```ts config-catalog
 /** Plugin configuration: the provider routes this instance owns. */
@@ -2459,6 +2471,8 @@ export interface PiAiModelProfile {
    * declares the offered levels and their wire spellings.
    */
   reasoningEfforts?: false | PiAiReasoningEfforts
+  /** Initial reasoning choice for this model; overrides the provider default. */
+  defaultEffort?: ModelThinkingLevel
   /** pi-ai wire-compatibility switches for this model, winning over the route's per field; one its protocol does not declare is refused. */
   compat?: PiAiCompatProfile
 }
@@ -2731,7 +2745,7 @@ export interface LspLocalServerConfig {
 ## `@deepseek-ai/dsh-mcp-client`
 
 - `inject`: `tools`
-- `source`: [`packages/mcp/mcp-client/src/index.ts:136`](../packages/mcp/mcp-client/src/index.ts)
+- `source`: [`packages/mcp/mcp-client/src/index.ts:140`](../packages/mcp/mcp-client/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -2995,7 +3009,7 @@ export interface Config {
 
 - `inject`: `shell` · `approval` · `sessions` · `agents` · `sessionProjections`
 - `refs`: [`ApprovalPolicy`](subsystems/approval.zh.md) · [`SandboxMode`](subsystems/sandbox.zh.md) · `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/interaction/permission-presets/src/index.ts:161`](../packages/interaction/permission-presets/src/index.ts)
+- `source`: [`packages/interaction/permission-presets/src/index.ts:162`](../packages/interaction/permission-presets/src/index.ts)
 
 ```ts config-catalog
 /** The {@link PermissionPresetService} config: preset table and composition default. */
@@ -3082,7 +3096,7 @@ export interface PlanModeConfig {
 
 - `inject`: `loader` · `profileContext`
 - `refs`: [`NpmFileSource`](subsystems/boot.zh.md)
-- `source`: [`packages/boot/plugin-manager/src/index.ts:56`](../packages/boot/plugin-manager/src/index.ts)
+- `source`: [`packages/boot/plugin-manager/src/index.ts:57`](../packages/boot/plugin-manager/src/index.ts)
 
 ```ts config-catalog
 /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
@@ -3410,7 +3424,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-schedule`
 
-- `inject`: `agents` · `sessions` · `storageDomain` · `sessionPersistence`
+- `inject`: `agents` · `sessions` · `storageDomain` · `sessionPersistence` · `sessionProjections`
 - `source`: [`packages/schedule/schedule/src/index.ts:81`](../packages/schedule/schedule/src/index.ts)
 
 ```ts config-catalog
@@ -3808,12 +3822,12 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-skill`
 
-- `source`: [`packages/skill/skill/src/index.ts:281`](../packages/skill/skill/src/index.ts)
+- `source`: [`packages/skill/skill/src/index.ts:285`](../packages/skill/skill/src/index.ts)
 
 ```ts config-catalog
 /** Skill registry configuration. */
 export interface Config {
-  /** Maximum number of completed cwd/provider catalogs kept in memory. */
+  /** Maximum number of completed cwd/provider catalogs kept in memory; zero disables completed-catalog caching. */
   readonly collectCacheMaxEntries?: number
 }
 ```
@@ -4078,7 +4092,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 - `inject`: `workingDirectory` · `sessionProjections`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:188`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:189`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */
@@ -4749,8 +4763,8 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-fs-search`
 
-- `inject`: `tools` · `systemPrompt` · `subprocess` · `workingDirectory`
-- `source`: [`packages/fs/tool-fs-search/src/index.ts:74`](../packages/fs/tool-fs-search/src/index.ts)
+- `inject`: `tools` · `systemPrompt` · `fs` · `subprocess` · `workingDirectory`
+- `source`: [`packages/fs/tool-fs-search/src/index.ts:72`](../packages/fs/tool-fs-search/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config; over-cap glob sampling is an explicit deployment choice and the remaining fields have defaults. */
@@ -4803,7 +4817,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-jobs`
 
 - `inject`: `tools` · `jobs` · `systemPrompt`
-- `source`: [`packages/jobs/tool-jobs/src/index.ts:44`](../packages/jobs/tool-jobs/src/index.ts)
+- `source`: [`packages/jobs/tool-jobs/src/index.ts:59`](../packages/jobs/tool-jobs/src/index.ts)
 
 ```ts config-catalog
 /** Configures bounded `job_output` waits and completion-notice delivery. */
@@ -5362,6 +5376,8 @@ export interface Config {
    * Absent or YAML `null` advertises the bind-address URL.
    */
   publicUrl?: string
+  /** Additional SPA entry paths rendered with the native index. */
+  indexPaths?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-app -->
@@ -5564,7 +5580,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-workspace-changes`
 
 - `inject`: `subprocess` · `fs`
-- `source`: [`packages/deliverables/workspace-changes/src/index.ts:35`](../packages/deliverables/workspace-changes/src/index.ts)
+- `source`: [`packages/deliverables/workspace-changes/src/index.ts:41`](../packages/deliverables/workspace-changes/src/index.ts)
 
 ```ts config-catalog
 /** Snapshot, capture, and comparison bounds. Invalid values fail plugin load. */

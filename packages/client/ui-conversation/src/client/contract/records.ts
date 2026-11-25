@@ -5,6 +5,7 @@
 import type { CommandId } from '@deepseek-ai/dsh-commands/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/types'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
+import type { HostToolCallSource } from '@deepseek-ai/dsh-session/types'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { LlmRetryEventData } from '@deepseek-ai/dsh-llm-retry/types'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
@@ -161,6 +162,9 @@ export interface TurnMaxTokensNode {
 
 /** A tool result paired (when in-window) with its call head. */
 export interface ToolResultNode {
+  source?: HostToolCallSource
+  status?: 'completed' | 'failed' | 'unknown' | 'not-dispatched'
+  value?: unknown
   kind: 'tool-result'
   seq: number
   /** Unix epoch ms from the tool/result session event. */
@@ -268,12 +272,13 @@ export type ConversationNode =
 
 /** Identity and placement shared by tool preparation and dispatch. */
 interface ToolCallHead {
+  source?: HostToolCallSource
   callId: string
   /** Parent Tool call for a PTC dispatch start; absent on a root Session call. */
   parentCallId?: string
   name: string
-  turn: number
-  step: number
+  turn: number | null
+  step: number | null
   /** Unix epoch ms when this stage began. */
   time: number
   /** Child calls owned by this call, in dispatch order. */
@@ -296,6 +301,8 @@ export type ToolArgs = PartialArguments
 
 /** A named model call whose complete arguments are not yet available to tool views. */
 export interface PreparingToolCall extends ToolCallHead {
+  turn: number
+  step: number
   readonly phase: 'preparing'
 }
 

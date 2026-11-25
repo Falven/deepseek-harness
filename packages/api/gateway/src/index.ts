@@ -43,7 +43,6 @@ import type {
   TypertRemoteEventDispatch,
   TypertRemoteEventFrame,
   TypertRemoteEventInvocation,
-  TypertRemoteEventOutcome,
   TypertRemoteEventSource,
 } from './types.ts'
 import {
@@ -79,6 +78,7 @@ export type {
   TypertRemoteEventFrame,
   TypertRemoteEventInvocation,
   TypertRemoteEventOutcome,
+  TypertRemoteEventResult,
   TypertRemoteEventSource,
 } from './types.ts'
 export type { RemoteEventHostInfo } from './stream-protocol.ts'
@@ -138,6 +138,7 @@ interface PendingRemoteEvent {
   readonly source: TypertRemoteEventInvocation
   readonly frame: RemoteEventInvocationFrame
   readonly deliveries: Set<RemoteEventClient>
+  settling: boolean
   releaseContext: () => void
   releaseSignal: () => void
 }
@@ -280,7 +281,8 @@ export class TypertGatewayService extends Service implements TypertGateway {
             path: REMOTE_STREAM_MUX_PATH,
             auth: 'required',
             handler: (req, socket, head, peer) => {
-              mux.handleUpgrade(req, socket, head, peer as PeerScope)
+              mux.handleUpgrade(req, socket, head, peer as PeerScope,
+                next => webCtx.waterfall('typert-gateway/stream-request', req, next))
             },
           }
           yield webCtx.webServer.registerUpgrade(route)
@@ -490,7 +492,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
             'Remote event result belongs to another Peer',
           )
         }
-        this.receiveRemoteEventResult(client, result)
+        await this.receiveRemoteEventResult(client, result)
         return { ok: true, value: undefined }
       } catch (error) {
         return rpcFailure(error)
@@ -658,6 +660,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
           request: projected.request,
         },
         deliveries: new Set(),
+        settling: false,
         releaseContext,
         releaseSignal: () => {
           for (const signal of signals) signal.removeEventListener('abort', abort)
@@ -677,29 +680,28 @@ export class TypertGatewayService extends Service implements TypertGateway {
   }
 
   private deliverRemoteEvent(pending: PendingRemoteEvent, client: RemoteEventClient): void {
+    if (pending.settling) return
     pending.deliveries.add(client)
     client.deliveries.set(pending.id, pending)
     client.queue.push(pending.frame)
   }
 
-  private receiveRemoteEventResult(
+  private async receiveRemoteEventResult(
     client: RemoteEventClient,
     result: ReturnType<typeof parseRemoteEventResult>,
-  ): void {
+  ): Promise<void> {
     const pending = this.pendingRemoteEvents.get(result.eventId)
     // Settlement and Client replacement may race the result request. Results
     // from a completed event or a superseded delivery are idempotent no-ops.
-    if (pending === undefined || !pending.deliveries.has(client)) return
+    if (pending === undefined || pending.settling || !pending.deliveries.has(client)) return
     this.removeRemoteEventDelivery(pending, client)
     if (result.outcome.kind === 'result') {
-      this.settleRemoteEvent(pending, {
-        kind: 'result',
-        value: result.outcome.value,
-      })
+      await this.admitRemoteEventResult(pending, result.outcome.value)
     } else if (result.outcome.kind === 'rejected') {
       this.cancelRemoteEvent(pending, restoreRemoteEventRejection(result.outcome.error))
     } else if (pending.deliveries.size === 0) {
-      this.settleRemoteEvent(pending, { kind: 'next' })
+      this.finishRemoteEvent(pending)
+      pending.source.resolve({ kind: 'next' })
     }
   }
 
@@ -714,9 +716,23 @@ export class TypertGatewayService extends Service implements TypertGateway {
     client.queue.end()
   }
 
-  private settleRemoteEvent(pending: PendingRemoteEvent, outcome: TypertRemoteEventOutcome): void {
+  private async admitRemoteEventResult(pending: PendingRemoteEvent, value: unknown): Promise<void> {
+    pending.settling = true
+    try {
+      await this.ctx.serial('typert-gateway/remote-event-result', {
+        eventId: pending.id,
+        event: pending.source.event,
+        request: pending.source.request,
+        context: pending.source.context,
+        value,
+      })
+    } catch (error) {
+      this.cancelRemoteEvent(pending, error)
+      return
+    }
+    if (this.pendingRemoteEvents.get(pending.id) !== pending) return
     this.finishRemoteEvent(pending)
-    pending.source.resolve(outcome)
+    pending.source.resolve({ kind: 'result', value })
   }
 
   private cancelRemoteEvent(pending: PendingRemoteEvent, reason: unknown): void {

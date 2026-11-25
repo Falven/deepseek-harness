@@ -635,6 +635,8 @@ export interface PiAiModelProfile {
    * declares the offered levels and their wire spellings.
    */
   reasoningEfforts?: false | PiAiReasoningEfforts
+  /** Initial reasoning choice for this model; overrides the provider default. */
+  defaultEffort?: ModelThinkingLevel
   /** pi-ai wire-compatibility switches for this model, winning over the route's per field; one its protocol does not declare is refused. */
   compat?: PiAiCompatProfile
 }

@@ -671,6 +671,7 @@ describe('SkillRegistry registry', () => {
     const incomplete = await ctx.skills.snapshot()
     expect(incomplete.skills.map(skill => skill.name)).toEqual(['second-skill'])
     expect(incomplete.complete).toBe(false)
+    expect(incomplete.reason).toBe('skill provider "flaky" skipped: Error: transient discovery failure')
     expect(flakyCalls).toBe(1)
     expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(['second-skill'])
     expect(flakyCalls).toBe(2)
@@ -702,6 +703,7 @@ describe('SkillRegistry registry', () => {
     expect(await ctx.skills.snapshot()).toMatchObject({
       skills: [{ name: 'available-skill' }],
       complete: false,
+      reason: 'skill provider "incomplete-candidates" reported incomplete discovery',
     })
     expect((await ctx.skills.get('available-skill'))?.content).toBe('available-skill body.')
     expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(['available-skill'])

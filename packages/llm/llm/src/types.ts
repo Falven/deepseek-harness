@@ -261,6 +261,8 @@ export interface LlmConfigurableProvider {
    * object; empty when the whole section is the profile.
    */
   settingsPath: readonly string[]
+  /** Shared provider form used by this adapter's settings profile. */
+  editor?: 'pi-ai'
   /**
    * Whether the owning adapter knows this route only because configuration
    * declared it — a gateway or self-hosted server it ships nothing about.

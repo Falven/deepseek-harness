@@ -264,8 +264,8 @@ export function apply(ctx: Context, config: Config): void {
       return
     }
     const replaced = pending[0]
-    if (replaced === undefined) agent.inbox.prepend('next-step', desired)
-    else agent.inbox.replace(replaced.id, desired)
+    if (replaced === undefined) agent.inbox.prepend('next-step', desired, 'context')
+    else agent.inbox.replace(replaced.id, desired, 'context')
     for (const message of pending.slice(1)) agent.inbox.remove(message.id)
   }
 

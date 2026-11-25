@@ -39,11 +39,11 @@ kind: "package-reference"
 
 ### 服务器实施的约束
 
-请求从 dist 根目录（包含 `distIndex` 的目录）提供。根路径与配置 index 以200渲染 `index.html`；其他已有文件使用其 MIME 类型，未知扩展名使用 `application/octet-stream`。根目录外路径返回403，缺失或非文件目标返回空404。准入后，非 GET/HEAD 请求返回405。回退 resource 通过 `webServer.renderIndex` 渲染各 index，使用 WebServer 准入的 Peer，或可信 `webServer.readResource(request, peer)` 显式传入的 Peer。启动 manifest（元数据清单）与该 Peer 的访问快照会送达两个 index 入口。
+请求从 dist 根目录（包含 `distIndex` 的目录）提供。根路径、配置 index 与精确的 `indexPaths` 别名以200渲染 `index.html`；其他已有文件使用其 MIME 类型，未知扩展名使用 `application/octet-stream`。根目录外路径返回403，缺失或非文件目标返回空404。准入后，非 GET/HEAD 请求返回405。回退 resource 通过 `webServer.renderIndex` 渲染各 index，使用 WebServer 准入的 Peer，或可信 `webServer.readResource(request, peer)` 显式传入的 Peer。启动 manifest（元数据清单）与该 Peer 的访问快照会送达每个 index 入口。
 
-所服务的 HTML 携带唯一的文档 base `<base href="./">`，位于每一条注入资源行之前，因此它冻结页面加载时所处的入口目录：shell 自身的应用目录相对引用与宿主的插件资源行都在服务该页面的挂载下解析。同一份 index 因而既服务源站根目录，也服务剥离前缀的代理所拥有的任一挂载；本插件只为 dist 根目录与配置的 index 路径渲染它。
+根路径的 index 在每条注入资源行之前携带 `<base href="./">`，保留剥离前缀代理的挂载。`indexPaths` 别名携带 `<base href="/">`，使嵌套路由从源站根目录解析资源。
 
-回退的同步 `auth` 选择器对根路径与配置 index 请求要求 `required`，其余文件声明 `anonymous`。WebServer 在文件服务前通过 Connection 集中准入；匿名资源免凭据验证，但仍执行 Connection 来源策略。resource 直接接收准入 Peer 并供 index 渲染闭包使用，不重复认证。Token 中间件在路由前处理根路径 Cookie 交换。读取 index 内容后，渲染检查请求与 Peer 均仍存活。
+回退的同步 `auth` 选择器对根路径与配置 index 请求要求 `required`，其余文件声明 `anonymous`。WebServer 在文件服务前通过 Connection 集中准入；匿名资源免凭据验证，但仍执行 Connection 来源策略。resource 直接接收准入 Peer 并供 index 渲染闭包使用，不重复认证。精确的 `indexPaths` 别名也要求 Peer。Token 中间件在路由前处理根路径 Cookie 交换。读取 index 内容后，渲染检查请求与 Peer 均仍存活。
 
 除 index 外，所有提供的文件都由浏览器重新验证。这类响应携带 `cache-control: no-cache` 和由文件内容 SHA-1 生成的弱 ETag，因此文件内容变化后即使名字不变也会得到新的 ETag；`If-None-Match` 等于当前 ETag 的请求得到空的 304。渲染出的 index 不带缓存头。
 

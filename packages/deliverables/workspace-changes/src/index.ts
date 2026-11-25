@@ -8,6 +8,7 @@
  * service until the Session is disposed. Outside a git repository, or without
  * git, the summary lists file-tool edits only.
  */
+import { realpath } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -17,13 +18,18 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
-import { GitRunner } from './git.ts'
+import { readCaptureBytes } from './capture.ts'
+import type { WorkspaceChangesEnvironment } from './environment.ts'
+import { localScratch } from './git.ts'
+import { canonicalPath, temporaryRoots } from './paths.ts'
 import { TurnRecorder } from './recorder.ts'
 import type { WorkspaceChanges } from './types.ts'
 
 export type {
   WorkspaceChangedFile, WorkspaceChanges, WorkspaceChangesSummary, WorkspaceDiffHunk, WorkspaceFileDiff,
 } from './types.ts'
+
+export type { WorkspaceChangesEnvironment, WorkspaceChangesEnvironmentRequest, WorkspaceChangesScratch, WorkspaceCaptureBytes } from './environment.ts'
 
 /** Stable Loader identity. */
 export const name = 'workspace-changes'
@@ -105,38 +111,50 @@ export function apply(ctx: Context, config: Config): void {
   const recorders = new Map<Session, TurnRecorder>()
   const mutations = new WeakMap<object, TurnRecorder>()
   const byId = new Map<SessionId, TurnRecorder>()
+  const disposals = new Set<Promise<void>>()
   const forget = (session: Session): Promise<void> => {
     const recorder = recorders.get(session)
     recorders.delete(session)
     byId.delete(session.id)
-    return recorder?.dispose() ?? Promise.resolve()
+    const disposal = (recorder?.dispose() ?? Promise.resolve()).finally(() => { disposals.delete(disposal) })
+    disposals.add(disposal)
+    return disposal
   }
   ctx.effect(() => async () => {
     lifetime.abort()
-    await Promise.all([...recorders.keys()].map(forget))
+    await Promise.all([...recorders.keys()].map(forget).concat([...disposals]))
   })
   const service: WorkspaceChanges = {
     summary: (sessionId, seq) => byId.get(sessionId)?.summary(seq),
     diff: (sessionId, seq, index, signal) => byId.get(sessionId)?.diff(seq, index, signal) ?? Promise.resolve(undefined),
   }
   ctx.provide('workspaceChanges', service)
-  let runner: Promise<GitRunner | null> | undefined
-  const gitRunner = (): Promise<GitRunner | null> => {
-    runner ??= resolveGit(ctx, lifetime.signal).then((executable) => {
-      if (executable === null) {
-        ctx.logger.info('workspace-changes: git is unavailable; only file-tool edits are summarized')
-        return null
+  let nativeGit: Promise<string | null> | undefined
+  const environment = (session: Session, cwd: string, signal: AbortSignal): Promise<WorkspaceChangesEnvironment> => {
+    const combined = AbortSignal.any([signal, lifetime.signal])
+    return ctx.waterfall('workspace-changes/environment', { session, cwd, signal: combined }, async () => {
+      combined.throwIfAborted()
+      const paths = { cwd: await realpath(cwd), home: await canonicalPath(homedir()), temporaryRoots: await temporaryRoots() }
+      nativeGit ??= resolveGit(ctx, lifetime.signal).then((executable) => {
+        if (executable === null) ctx.logger.info('workspace-changes: git is unavailable; only file-tool edits are summarized')
+        return executable
+      })
+      const executable = await nativeGit
+      combined.throwIfAborted()
+      return {
+        paths, canonicalPath, readFile: readCaptureBytes,
+        git: executable === null ? null : { subprocess: ctx.subprocess, executable },
+        scratch: localScratch, dispose: () => Promise.resolve(),
       }
-      return new GitRunner(ctx.subprocess, executable, { timeoutMs: config.timeoutMs, outputMaxBytes: config.outputMaxBytes })
     })
-    return runner
   }
   const recorderFor = (session: Session, original: string): TurnRecorder => {
     let recorder = recorders.get(session)
     if (recorder === undefined) {
-      // The Session's directory now; `workspace-root/change` events report later moves.
+      // Directory changes apply to the next turn's execution environment.
       recorder = new TurnRecorder(session, ctx.get('workingDirectory')?.get(session) ?? original, {
-        git: gitRunner(), tempRoot: tmpdir(), maxFiles: config.maxFiles,
+        environment: (cwd, signal) => environment(session, cwd, signal), tempRoot: tmpdir(), maxFiles: config.maxFiles,
+        timeoutMs: config.timeoutMs, outputMaxBytes: config.outputMaxBytes,
         maxFileBytes: config.maxFileBytes, diffTimeoutMs: config.diffTimeoutMs,
         warn: (message) => { ctx.logger.warn(message) },
       })
@@ -155,7 +173,7 @@ export function apply(ctx: Context, config: Config): void {
     else if (event.type === 'tool/result') recorders.get(session)?.observe(event)
     else if (event.type === 'turn/end') recorders.get(session)?.end(event.data.turn)
   })
-  ctx.on('session/disposed', (session) => { void forget(session) })
+  ctx.on('session/disposed', session => forget(session))
   ctx.on('agent/turn-stopping', async ({ agent, turn }) => {
     await recorders.get(agent.session)?.stopping(turn)
   })

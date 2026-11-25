@@ -21,8 +21,8 @@ function mount(text: string, streaming = false) {
 it('loads Desktop inline and hover previews through the file route after streaming settles', () => {
   vi.useFakeTimers()
   const path = '/work/测试 图片#100%.png'
-  const src = fileMediaUrl('dsh-app://app/', path)!
-  const images = { fileDrag, resolve: (value: string) => fileMediaUrl('dsh-app://app/', value), labels }
+  const src = fileMediaUrl('dsh-app://app/', path, 'media-session')!
+  const images = { fileDrag, resolve: (value: string) => fileMediaUrl('dsh-app://app/', value, 'media-session'), labels }
   const text = `![图片](<${encodeURI(path).replace('#', '%23')}>)\n\n[打开图片](<${encodeURI(path).replace('#', '%23')}>)`
   const openFile = vi.fn()
   const content = (streaming: boolean) => <MarkdownDelegateProvider fileImages={images} openFile={openFile}>

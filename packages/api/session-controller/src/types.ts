@@ -186,6 +186,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     }
     'session/projections-unavailable': Record<string, never>
     'session/writer-held': { readonly sessionId: SessionId }
+    /** An integration refuses to resume an existing Session. */
+    'session/not-resumable': { readonly sessionId: SessionId }
     'session/agent-busy': { readonly reason: string }
     'session/invalid-time-zone': { readonly value: string }
     'session/workspace-attach-failed': { readonly sessionId: SessionId; readonly workspaceId: string }

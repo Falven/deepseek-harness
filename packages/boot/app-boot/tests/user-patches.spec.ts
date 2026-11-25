@@ -337,6 +337,38 @@ describe('Loader entry disabled interpolation', () => {
 })
 
 describe('profile reconciliation settlement', () => {
+  it('admits changed patches before removing entries and skips admission for unchanged patches', async () => {
+    const dir = tmp()
+    writeFileSync(join(dir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(dir, 'candidate.mjs'), 'export function apply() {}\n')
+    const patches = [{ insert: [{ id: 'candidate', name: './candidate.mjs' }] }]
+    const ctx = await boot(NAME, join(dir, 'cordis.yml'), patches, (host) => {
+      host.provide('profileContext', {
+        name: NAME, dir, patchPath: join(dir, PROFILE_PATCH_FILENAME), installAnchor: join(dir, 'package.json'),
+        cwd: dir, home: dir, startedBundles: [], overlayPaths: [], telemetryDisabledEnv: undefined,
+      })
+    })
+    onTestFinished(() => ctx.fiber.dispose())
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    let admissions = 0
+    ctx.on('app-boot/profile-reload', async (_profile, next) => {
+      admissions++
+      entered.resolve(undefined)
+      await release.promise
+      return next()
+    })
+    expect(await reconcileProfilePatches(ctx, patches, NAME)).toEqual([])
+    expect(admissions).toBe(0)
+    const operation = reconcileProfilePatches(ctx, [], NAME)
+    await entered.promise
+    expect([...ctx.loader.entries()].some(row => row.options.id === 'candidate')).toBe(true)
+    release.resolve(undefined)
+    expect(await operation).toEqual([])
+    expect([...ctx.loader.entries()].some(row => row.options.id === 'candidate')).toBe(false)
+    expect(admissions).toBe(1)
+  })
+
   it('retains unchanged import diagnostics across profile reconciliation', async () => {
     const dir = tmp()
     writeFileSync(join(dir, 'cordis.yml'), '[]\n')

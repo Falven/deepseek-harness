@@ -132,6 +132,26 @@ describe('LocalFileReferenceService', () => {
     }
   })
 
+  it('lets a provider search the addressed remote directory', async () => {
+    const ctx = await harness()
+    try {
+      const { agent } = await stubAgent(ctx)
+      const remoteRoot = await mkdtemp(join(tmpdir(), 'dsh-file-reference-remote-'))
+      roots.push(remoteRoot)
+      await writeFile(join(remoteRoot, 'REMOTE.md'), 'remote')
+      class RemoteReferences extends LocalFileReferenceService {
+        protected override createSearch(): WorkspaceFileSearch {
+          return new WorkspaceFileSearch(remoteRoot, this.config)
+        }
+      }
+      await ctx.plugin(RemoteReferences)
+      expect(await ctx.fileReferences.list(agent, '', new AbortController().signal))
+        .toEqual([{ path: 'REMOTE.md', kind: 'file' }])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('invalidates cached searches after tool results and disposes them with the agent', async () => {
     const ctx = await harness()
     const { agent, dispose } = await stubAgent(ctx)

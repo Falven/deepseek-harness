@@ -3,11 +3,12 @@
 import { hostname } from 'node:os'
 import { resolve } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { AdmittedPromptContentPart, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-fs'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import { errorChain, type ReasoningEffortId, type MessageSource } from '@deepseek-ai/dsh-llm'
+import { errorChain, type ReasoningEffortId, type MessageSource, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-client-file-upload'
 import { canOpenNativePath, nativeFileManager, nativeFileApplications, openNativeFileApplication, openNativeAssociatedPath, revealNativePath } from '@deepseek-ai/dsh-native-command'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -77,10 +78,29 @@ declare module '@deepseek-ai/cordis' {
     /** Host Session business API and Remote namespace owner. */
     sessionController: SessionController
   }
+  interface Events {
+    /** Scope image storage during prompt admission to the validated Agent.
+     * @param payload - Agent whose prompt is being admitted.
+     * @mode waterfall
+     */
+    'session/attachment-admit'(payload: { agent: Agent }, next: () => Promise<AdmittedPromptContentPart[]>): Promise<AdmittedPromptContentPart[]>
+    /** Scope an attachment-store read to the Session authorized by the gateway.
+     * @param payload - Session whose image is being read.
+     * @mode waterfall
+     */
+    'session/attachment-read'(payload: { sessionId: SessionId }, next: () => Promise<StoredImageAttachment>): Promise<StoredImageAttachment>
+    /** Attach trusted Host attribution before native input admission.
+     * @param payload - Agent and message awaiting source attribution.
+     * @mode waterfall
+     */
+    'session/input-source'(payload: { agent: Agent; message: UserMessage }, next: () => Promise<MessageSource>): Promise<MessageSource>
+  }
 }
 
 /** Session Controller deployment policy. */
 export interface Config {
+  /** Directory for a new Session with no explicit Workspace or cwd. */
+  readonly defaultCwd?: string
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
   /** Positive integral milliseconds of list work before yielding between complete rows. */
@@ -123,6 +143,7 @@ export class SessionController extends TypertRemoteService {
   ]
 
   static Config: z<Config, ResolvedConfig> = z.object({
+    defaultCwd: z.string(),
     nativeOpen: z.boolean(),
     listWorkSliceMs: z.natural().min(1).default(16),
   })
@@ -141,6 +162,7 @@ export class SessionController extends TypertRemoteService {
   private readonly revealPath: (path: string, signal: AbortSignal) => Promise<void>
   private readonly canOpenPath: () => boolean
   private readonly listWorkSliceMs: number
+  private readonly defaultCwd: string
   private readonly promotions = new Set<Promise<void>>()
 
   /**
@@ -150,7 +172,9 @@ export class SessionController extends TypertRemoteService {
    */
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
-    this.listWorkSliceMs = SessionController.Config(config).listWorkSliceMs
+    const resolved = SessionController.Config(config)
+    this.listWorkSliceMs = resolved.listWorkSliceMs
+    this.defaultCwd = resolved.defaultCwd ?? process.cwd()
     this.fileApplications = internals.fileApplications ?? nativeFileApplications
     this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication
     this.openPath = internals.openPath ?? openNativeAssociatedPath
@@ -164,7 +188,7 @@ export class SessionController extends TypertRemoteService {
     ctx.typert.resources.register('session', { resolve: resolveSessionResource })
     this.agents = new ApiSessionAgentController(ctx)
     this.agents.initialize()
-    this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
+    this.commands = new SessionCommandController(ctx, this.agents, this.defaultCwd)
     ctx.effect(() => ctx.fileUploads.registerAgentResolver(async (sessionId) => {
       const result = await this.agents.resolveAgent(sessionId)
       if ('error' in result) throw result.error

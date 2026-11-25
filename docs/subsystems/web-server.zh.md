@@ -50,11 +50,11 @@ interface WebResourceRoute {
 
 所有 `webserver/*` 事件均以对应的 WebServer 为分发 subject，包括 `index-inject` 与 `entry-url`。普通监听器匹配发起者的 `webServer` isolation；显式 `{ global: true }` 监听器跳过该过滤。作为事件数据传入的 Peer 不决定监听器选择。自定义载体和应用发起者必须提供 WebServer subject。
 
-匹配顺序为精确、最长前缀、唯一 owner 的回退；upgrade 精确匹配。匹配后，`auth` 直接或通过同步请求选择器解析为 `anonymous`、`required`（默认）或 `deny`。`deny` 不触发准入事件，直接返回403。其余策略触发同步 `webserver/authorize` 并采用首个决策；无人决策时匿名放行，认证返回503。Connection 对两者均检查来源，仅对认证路由调用 ConnectionAuthentication。因此匿名资源免凭据，但不能免除活动 Connection 的来源策略。
+HTTP 依次匹配精确路由、最长匹配前缀和唯一 owner 的回退。upgrade 先匹配精确路由，再匹配最长前缀。匹配后，`auth` 直接或通过同步请求选择器解析为 `anonymous`、`required`（默认）或 `deny`。`deny` 不触发准入事件，直接返回403。其余策略触发同步 `webserver/authorize` 并采用首个决策；无人决策时匿名放行，认证返回503。Connection 对两者均检查来源，仅对认证路由调用 ConnectionAuthentication。因此匿名资源免凭据，但不能免除活动 Connection 的来源策略。
 
 handler 通过末尾参数取得准入 Peer，resource 使用已有 `resource(request, peer?)` 参数。认证路由必须取得存活 Peer，匿名路由可省略。准入后 resource 只接受 GET/HEAD。可信 `readResource(request, peer)` 遵循同样的匹配顺序且仅访问 resource，跳过来源与凭据检查，但解析出的 `deny` 仍返回403。[前端回退](../../packages/host/frontend-static/README.zh.md)选择 index 认证访问与静态资源匿名访问，再为传入 Peer 渲染 index 启动数据。
 
-`webserver/request(request, response, next)` 保持为路由选择与准入前的 HTTP waterfall；监听器拥有响应或等待 `next()`。[Token 插件](../../packages/host/authentication-token/README.zh.md)通过它处理根 Token 交换，并以匿名 auth 注册 `/connect`，在 Connection 来源检查后验证启动 Token。页面 resource 使用准入 Peer，不重复认证。
+`webserver/request(request, response, next)` 保持为路由选择与准入前的 HTTP waterfall；监听器拥有响应或等待 `next()`。启用 `externalAdmission` 时，应用注册的提供方在此 waterfall 前包装 HTTP 分发，并在路由授权前包装 upgrade 分发。提供方注册前，HTTP 返回 503，upgrade socket 会关闭。[Token 插件](../../packages/host/authentication-token/README.zh.md)通过它处理根 Token 交换，并以匿名 auth 注册 `/connect`，在 Connection 来源检查后验证启动 Token。页面 resource 使用准入 Peer，不重复认证。
 
 upgrade 准入成功后，`webserver/upgrade(req, socket, head, peer, next)` 在已注册协议 handler 前执行。它携带准入 Peer，匿名访问可为 `undefined`；被拒绝的请求不会进入。监听器自行处理 Socket 或等待 `next()`；waterfall 的末端等待路由 handler，包括其异步完成。中间件或 handler 失败时记录日志并销毁 Socket。在 `/api/remote.mux` 上，Token 仅对自己映射表内的 API Peer 执行单 Socket 所有权与凭据撤销；其他 Provider 委派后续处理，不应用 Token 策略。
 
@@ -94,6 +94,8 @@ interface Config {
   compressionLevel?: number
   /** Minimum known response length eligible for gzip; unknown-length streams are eligible. @default 1024 */
   compressionThresholdBytes?: number
+  /** Reject all traffic until an application admission provider is registered. @default false */
+  externalAdmission?: boolean
 }
 ```
 
@@ -280,12 +282,19 @@ getOrigin(): string
 register(route: WebRoute | WebResourceRoute): () => void
 
 /**
- * Register an exact-path HTTP upgrade route. Duplicate paths throw because
+ * Register an HTTP upgrade route. Duplicate paths of the same kind throw because
  * one socket can have only one protocol owner.
  * @param route - pathname and handler owning negotiation plus socket use.
  * @returns the disposer removing the route.
  */
 registerUpgrade(route: WebUpgradeRoute): () => void
+
+/**
+ * Register one process-owned gate, retained independently of route ownership.
+ * @param admission - provider that authenticates incoming requests.
+ * @returns a disposer removing the provider.
+ */
+registerAdmission(admission: WebAdmissionProvider): () => void
 
 /**
  * Claim the fallback seat: the handler or resource answering every request

@@ -56,6 +56,8 @@ export interface TabOccurrence {
   readonly tabId: TabId
   /** Aborted when the record disappears or this package unloads. */
   readonly signal: AbortSignal
+  /** Hold navigation while a removed body completes cleanup. */
+  readonly retainBody: () => () => void
   /** The latest navigation aimed at the record; `set` on every `navigate`. */
   readonly navigation: SnapshotStore<SidebarRightTabNavigation>
   /** Stable for the occurrence's life, so a body may hold it. */
@@ -65,6 +67,7 @@ export interface TabOccurrence {
 /** An occurrence plus what only the domain touches. */
 interface Held extends TabOccurrence {
   commands: SidebarRightTabCommands
+  bodies: number
 
   readonly controller: AbortController
   /** The docked pane holding the record at the last sync; `undefined` while it floats or before any sync. */
@@ -75,6 +78,7 @@ interface Held extends TabOccurrence {
 
 /** Every session's occurrences. */
 export class TabDomain {
+  private readonly retired = new Map<SessionId, Map<TabId, Held>>()
   private readonly bySession = new Map<SessionId, Map<TabId, Held>>()
 
   /**
@@ -99,6 +103,11 @@ export class TabDomain {
     for (const [tabId, occurrence] of held) {
       if (layout.tabs[tabId] !== undefined) continue
       held.delete(tabId)
+      if (occurrence.bodies > 0) {
+        let retired = this.retired.get(sessionId)
+        if (!retired) { retired = new Map(); this.retired.set(sessionId, retired) }
+        retired.set(tabId, occurrence)
+      }
       occurrence.controller.abort()
     }
     for (const tab of Object.values(layout.tabs)) {
@@ -119,7 +128,7 @@ export class TabDomain {
    * @throws when the record has not been reconciled or has disappeared.
    */
   occurrence(sessionId: SessionId, tab: Pick<TabRecord, 'id'>): TabOccurrence {
-    const occurrence = this.bySession.get(sessionId)?.get(tab.id)
+    const occurrence = this.bySession.get(sessionId)?.get(tab.id) ?? this.retired.get(sessionId)?.get(tab.id)
     if (occurrence === undefined) throw new Error(`sidebarRight: tab "${tab.id}" has no committed occurrence in session "${sessionId}"`)
     return occurrence
   }
@@ -148,6 +157,7 @@ export class TabDomain {
       for (const occurrence of held.values()) occurrence.controller.abort()
     }
     this.bySession.clear()
+    this.retired.clear()
   }
 
   private session(sessionId: SessionId): Map<TabId, Held> {
@@ -179,6 +189,18 @@ export class TabDomain {
       tabId,
       controller,
       commands: {},
+      bodies: 0,
+      retainBody: () => {
+        held.bodies++
+        return () => {
+          held.bodies--
+          const retired = this.retired.get(sessionId)
+          if (held.bodies === 0 && retired?.get(tabId) === held) {
+            retired.delete(tabId)
+            if (retired.size === 0) this.retired.delete(sessionId)
+          }
+        }
+      },
       signal: controller.signal,
       navigation: createSnapshotStore(navigation),
       paneId: undefined,

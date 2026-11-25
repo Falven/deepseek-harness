@@ -132,6 +132,13 @@ describe('DirectoryBrowser', () => {
     expect(screen.queryByRole('button', { name: '/' })).toBeNull()
   })
 
+  it('hides New folder when the Host allows selection only', async () => {
+    mount({ listDirectory: async (path?: string) => ({ ...listingFor(path), canCreate: false }) })
+    await waitFor(() => { expect(screen.getByRole('listitem')).toBeTruthy() })
+    expect(screen.queryByRole('button', { name: 'browser.newFolder' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'browser.open' })).toBeTruthy()
+  })
+
   it('shows hidden entries when the toggle is on and hides them again on close', async () => {
     const b = mount()
     await waitFor(() => { expect(screen.getByRole('listitem')).toBeTruthy() })

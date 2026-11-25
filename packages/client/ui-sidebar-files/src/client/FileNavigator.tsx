@@ -404,7 +404,7 @@ export function FileNavigator({
         onScroll={(event) => { scrolled(paneId, event.currentTarget.scrollTop) }}
       >
         {view === undefined || entries === undefined || directories === undefined
-          ? <p className={css.note} data-files-row="loading">{t('loading')}</p>
+          ? <p className={css.note} data-files-row="loading" data-sidebar-loading="true" role="status" aria-atomic="true">{t('loading')}</p>
           : search !== undefined
             ? result?.kind === 'failed'
               ? <SearchFailure failure={result.failure} onRetry={() => { retrySearch(paneId) }} t={t} />

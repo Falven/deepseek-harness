@@ -31,6 +31,7 @@ async function fakeAgent(ctx: Context, rawId: string): Promise<Agent> {
     ctx: scope.ctx,
     send: () => {},
     followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
+    changeSettings: () => Promise.reject(new Error('settings changes are unsupported in this fixture')),
     runMaintenance: job => job(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
   }

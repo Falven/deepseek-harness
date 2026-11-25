@@ -177,4 +177,25 @@ diff(sessionId: SessionId, seq: number, index: number, signal: AbortSignal): Pro
 Types: [SessionId](core.zh.md)
 
 Source: [`packages/deliverables/workspace-changes/src/types.ts`](../../packages/deliverables/workspace-changes/src/types.ts)
+
+<a id="workspace-changes-events"></a>
+
+### `workspace-changes/*` events
+
+<a id="workspace-changesenvironment--waterfall"></a>
+
+#### `workspace-changes/environment` — waterfall
+
+Resolve one Session's execution world; the default uses the Host filesystem and subprocess capability.
+
+```ts cordis-catalog
+/** Resolve one Session's execution world; the default uses the Host filesystem and subprocess capability.
+ * @param request - Session, working directory, and recorder lifetime cancellation.
+ * @param next - remaining providers and the native local default.
+ * @mode waterfall
+ */
+'workspace-changes/environment'( request: WorkspaceChangesEnvironmentRequest, next: () => Promise<WorkspaceChangesEnvironment>, ): Promise<WorkspaceChangesEnvironment>
+```
+
+Source: [`packages/deliverables/workspace-changes/src/environment.ts`](../../packages/deliverables/workspace-changes/src/environment.ts)
 <!-- END GENERATED cordis-surface -->

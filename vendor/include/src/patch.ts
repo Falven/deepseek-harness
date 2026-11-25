@@ -5,6 +5,8 @@ import { applyChanges, detach, flatten, type Journal, place } from './journal.ts
 export interface PatchOptions {
   id?: string
   insert?: EntryOptions[]
+  /** Apply nested patches to the targeted entry's config.plugins list. */
+  pluginPatches?: PatchOptions[]
   name?: string
   config?: any
   group?: boolean | null
@@ -134,7 +136,7 @@ export function applyPatches(data: EntryOptions[], patches: PatchOptions[] | und
   mount(data, FILE)
 
   patches?.forEach((patch, index) => {
-    const { id, insert, name, ...overrides } = patch
+    const { id, insert, name, pluginPatches, ...overrides } = patch
     const target = id ? entries.get(id) : undefined
 
     if (insert) {
@@ -175,6 +177,15 @@ export function applyPatches(data: EntryOptions[], patches: PatchOptions[] | und
       ensureIds(target.config, id => entries.has(id))
       target.config = structuredClone(target.config)
       mount(target.config, { type: 'embedded', index, key: 'config' })
+    }
+
+    if (pluginPatches !== undefined) {
+      const config = target.config
+      if (!Array.isArray(config?.plugins)) {
+        warn('patch pluginPatches: entry %C has no config.plugins', id)
+        return
+      }
+      target.config = { ...config, plugins: applyPatches(config.plugins, pluginPatches, warn).data }
     }
   })
 

@@ -63,7 +63,8 @@
     "@deepseek-ai/dsh-session-projection": "workspace:*",
     "@deepseek-ai/dsh-typert-protocol": "workspace:*",
     "@deepseek-ai/dsh-user-approval": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@deepseek-ai/cordis": "workspace:~",
+    "@deepseek-ai/dsh-llm": "workspace:*"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "workspace:*",
@@ -82,6 +83,7 @@
     "@deepseek-ai/dsh-user-approval": "workspace:*",
     "@deepseek-ai/cordis": "workspace:~",
     "@deepseek-ai/dsh-settings": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*"
+    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
+    "@deepseek-ai/dsh-llm": "workspace:*"
   }
 }

@@ -23,6 +23,8 @@ interface SkillProviderObservation {
   readonly candidates: readonly SkillCandidate[]
   /** Whether discovery completed and these candidates may be cached. */
   readonly complete: boolean
+  /** Optional diagnostic describing the incomplete observation. */
+  readonly reason?: string
 }
 ```
 
@@ -136,6 +138,8 @@ interface SkillCatalogSnapshot {
   readonly skills: SkillSummary[]
   /** Whether every registered provider completed without a concurrent catalog revision. */
   readonly complete: boolean
+  /** First provider failure when discovery is incomplete. */
+  readonly reason?: string
 }
 ```
 
@@ -219,7 +223,7 @@ The registry owns only its discovery-cache bound. The local provider owns filesy
 ```ts type-equiv
 /** Skill registry configuration. */
 interface Config {
-  /** Maximum number of completed cwd/provider catalogs kept in memory. */
+  /** Maximum number of completed cwd/provider catalogs kept in memory; zero disables completed-catalog caching. */
   readonly collectCacheMaxEntries?: number
 }
 ```
@@ -254,7 +258,7 @@ Host service backing `ctx.remote.skills` without activating a cold Agent.
 /**
  * List the user-invocable skills visible to one Session composition.
  * @param request - Session identity whose cwd and preset select the catalog view.
- * @param signal - caller lifetime carried by the Remote transport; admitted catalog reads retain their existing completion semantics.
+ * @param signal - cancellation for resolving live directories and discovering skills.
  * @returns user-invocable skill metadata without loading skill bodies.
  * @throws RemoteError when the Session cannot be inspected or no registry can serve it.
  */

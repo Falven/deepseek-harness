@@ -101,6 +101,7 @@ function stubAgent(id: string, delegationDepth = 0, origin?: 'subagent'): Agent 
     status: 'idle',
     ctx: new Context(),
     send() {}, followup() {}, steer() {}, inject() {}, cancel() {},
+    changeSettings: () => Promise.reject(new Error('settings changes are unsupported in this fixture')),
     runMaintenance: task => task(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
   }

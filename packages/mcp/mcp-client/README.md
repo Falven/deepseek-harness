@@ -77,9 +77,11 @@ After startup, the server's tools appear as `mcp__<serverName>__<tool>` — try 
 
 ### Host for a server manager
 
-A plugin that manages servers at runtime, such as the [MCP manager](../mcp-manager/README.md), creates its own `McpClientHost` with `new McpClientHost(ctx)`. The host provides `ctx.mcpClientHost`, the only way such a plugin uses this package: it validates a server configuration, mounts server instances, probes servers, and creates explicit OAuth authorization owners. Instances the host mounts run below the managing plugin's fiber and end with it.
+A plugin that manages servers at runtime, such as the [MCP manager](../mcp-manager/README.md), creates its own `McpClientHost` with `new McpClientHost(ctx)`. The host provides `ctx.mcpClientHost` to validate a server configuration, mount server instances, probe servers, and create explicit OAuth authorization owners. Instances the host mounts run below the managing plugin's fiber and end with it.
 
 `validate` resolves a server configuration through its transport's own schema and also refuses an invalid template token, reconnect policy, or OAuth beside an `Authorization` header, so each refusal names the field after the configuration path the caller passes.
+
+A Host that owns per-invocation credentials or MCP App capabilities may call `startConnection` with transport and tool adapters. It registers its own ServerContext and awaits disposal before replacing a connection. An adapter-supplied transport cannot use the native OAuth flow.
 
 ### Tool naming and coexistence
 
@@ -166,7 +168,7 @@ This section explains the design decisions behind the bridge and points at the c
 | [`src/oauth.ts`](src/oauth.ts) | Explicit browser authorization: callback, flow, and in-flight work under one owner |
 | [`src/types.ts`](src/types.ts) | Client-safe connection status, probe outcome, and OAuth attempt types (`./types`) |
 
-The exported `createMcpToolDefinition(ctx, options)` adapts an upstream tool schema and raw-result callback to the same canonical values, errors, and durable image projection. Each callback receives the exact `ToolExecution`, including its Agent and cancellation signal; SDK spec-type validation checks its result before projection. Callers own registration, cancellation deadlines, and provider teardown. The native Cua Driver provider uses this adapter without opening an MCP transport.
+The exported `createMcpToolDefinition(ctx, options)` adapts an upstream tool schema and raw-result callback to the same canonical values, errors, and durable image projection. With `retainProtocolResult`, it also retains the validated complete MCP result in private final metadata after policy, including standard MCP errors, while leaving canonical program values unchanged. Each callback receives the exact `ToolExecution`, including its Agent and cancellation signal; SDK spec-type validation checks its result before projection. Callers own registration, cancellation deadlines, and provider teardown. The native Cua Driver provider uses this adapter without opening an MCP transport.
 
 ### Lifecycle and sync
 

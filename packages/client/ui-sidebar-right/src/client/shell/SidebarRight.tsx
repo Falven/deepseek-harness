@@ -207,7 +207,9 @@ interface TabSlotProps extends Pick<PanelProps, 'renderSlot' | 'occurrence' | 'u
 function TabSlot({
   renderSlot, occurrence, useTabTypes, useTabNavigation, useStore, fullscreen, shortcuts, active, retainTab, tab, seat, fallback,
 }: TabSlotProps): ReactNode {
-  const { id, signal, tabActions } = occurrence(tab)
+  const held = useMemo(() => occurrence({ id: tab.id }), [occurrence, tab.id])
+  const { id, signal, tabActions } = held
+  useLayoutEffect(() => held.retainBody(), [held])
   const definition = useTabTypes(types => types.find(definition => definition.kind === tab.kind))
   const retained = seat === 'sidebar.right.pane.tab' && retainsBody(tab, definition)
   useLayoutEffect(() => retained ? retainTab(tab.id, signal) : undefined, [retained, retainTab, tab.id, signal])
@@ -368,6 +370,7 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
           renderTab={bodiesFor(panel)}
           renderTabTitle={titlesFor(panel)}
           active={panel.active}
+          retireTab={tab => types.find(type => type.kind === tab.kind)?.retire?.(sessionId, tab)}
           keepMounted={tab => retainsBody(tab, types.find(type => type.kind === tab.kind))}
           getTabTriggerProps={panel.getTabTriggerProps} tabMenuOpen={panel.tabMenuOpen}
           chrome={<PanelChrome

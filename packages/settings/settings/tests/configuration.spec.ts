@@ -1,9 +1,10 @@
 /** Real profile patch behavior and reference lifetime. */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, it, vi } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import { parse } from 'yaml'
 import z from '@deepseek-ai/schemastery'
+import { ProfileReloadDeferred, type ProfileReloadOutcome } from '@deepseek-ai/dsh-app-boot'
 import { configurationFixture as fixture } from './configuration-fixture.ts'
 
 it('persists a model edit, updates the real consumer without remounting, and restores it at restart', async () => {
@@ -170,6 +171,35 @@ it('restores the profile patch when a plugin rejects activation after validation
   await expect(ctx.configEditor.edit(entry, raw => ({ ...raw, ordinary: 'rejected' }))).rejects.toThrow()
   expect(readFileSync(profile.patchPath, 'utf8')).toBe(before)
   expect(ctx.settings.describe().find(row => row.ns === 'first')!.value).toMatchObject({ count: 2 })
+})
+
+it('resumes a deferred config edit inside the HMR queue', async () => {
+  const { ctx, profile } = await fixture()
+  const completion = Promise.withResolvers<ProfileReloadOutcome>()
+  let resume: (() => Promise<ProfileReloadOutcome>) | undefined
+  ctx.on('app-boot/profile-reload', (_profile, next) => {
+    resume = next
+    throw new ProfileReloadDeferred(completion.promise)
+  })
+  const entry = ctx.configEditor.entries().find(row => row.options.id === 'first')!
+  await ctx.configEditor.edit(entry, raw => ({ ...raw, count: 8 }))
+  expect(parse(readFileSync(profile.patchPath, 'utf8'))).toContainEqual({ id: 'first', name: 'cordis:probe', config: { ordinary: 'fixed', token: 'private', count: 8 } })
+  expect(ctx.settings.describe().find(row => row.ns === 'first')?.value).toMatchObject({ count: 2 })
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  onTestFinished(() => { release.resolve(undefined) })
+  const competing = ctx.hmr.runExclusive(async () => {
+    entered.resolve(undefined)
+    await release.promise
+  })
+  await entered.promise
+  if (resume === undefined) throw new Error('Deferred continuation missing')
+  const operation = resume()
+  expect(ctx.settings.describe().find(row => row.ns === 'first')?.value).toMatchObject({ count: 2 })
+  release.resolve(undefined)
+  await competing
+  completion.resolve(await operation)
+  expect(ctx.settings.describe().find(row => row.ns === 'first')?.value).toMatchObject({ count: 8 })
 })
 
 it('invalidates removed forms once and rejects writes held across entry removal', async () => {

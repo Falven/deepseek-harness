@@ -37,6 +37,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from './contract/slots.ts'
 import { GuideBody, type GuideInjected } from './tabs/guide/GuideBody.tsx'
+import { createVisibleGuideEntries } from './tabs/guide/entries.ts'
 import { GuideTitle } from './tabs/guide/GuideTitle.tsx'
 import { ExpandButton } from './shell/ExpandButton.tsx'
 import { RightbarSeat, type SidebarRightInjected } from './shell/SidebarRight.tsx'
@@ -275,18 +276,6 @@ export function apply(ctx: ClientContext): void {
     // Stage two for the guide: it declares the chain child it hosts and reads
     // the registry's entry boxes, which an ordinary type has no reason to do.
     const guidePins = createGuidePins()
-    const guideInjected: GuideInjected = {
-      hooks: {
-        shortcuts: ctx.shortcuts.catalog,
-        guideEntries: { subscribe: listener => tabs.subscribe(listener), getSnapshot: () => tabs.guide() },
-        entryPins: guidePins.unpinned,
-        entryActions: {
-          getSnapshot: () => ctx.slots.entriesOfSlot('sidebar.right.tab.guide.actions').length > 0,
-          subscribe: listener => ctx.slots.subscribe('sidebar.right.tab.guide.actions', listener),
-        },
-      },
-      setPinned: guidePins.setPinned,
-    }
     const disposeGuide = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
       name: 'sidebar.right.pane.tab',
       key: GUIDE_ID,
@@ -300,7 +289,20 @@ export function apply(ctx: ClientContext): void {
           kind: 'chain', scope: 'session', inject: { hooks: { tabInfo: guideTabInfoFactory } },
         },
       },
-      inject: () => guideInjected,
+      inject: (sessionId): GuideInjected => ({
+        hooks: {
+          shortcuts: ctx.shortcuts.catalog,
+          guideEntries: createVisibleGuideEntries({
+            subscribe: listener => tabs.subscribe(listener), getSnapshot: () => tabs.guide(),
+          }, sessionId),
+          entryPins: guidePins.unpinned,
+          entryActions: {
+            getSnapshot: () => ctx.slots.entriesOfSlot('sidebar.right.tab.guide.actions').length > 0,
+            subscribe: listener => ctx.slots.subscribe('sidebar.right.tab.guide.actions', listener),
+          },
+        },
+        setPinned: guidePins.setPinned,
+      }),
     }, GuideBody))
     const disposeGuideTitle = ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
       { name: 'sidebar.right.pane.tab.title', key: GUIDE_ID },

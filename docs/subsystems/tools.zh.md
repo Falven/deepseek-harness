@@ -61,6 +61,13 @@ interface ToolDefinition extends ToolSchema {
    */
   finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined
   /**
+   * Final private presentation metadata after policy and content finalization.
+   * @param exec - immutable execution identity and arguments.
+   * @param result - normalized outcome with any final content projection.
+   * @returns private metadata, or undefined to retain the presentation projection.
+   */
+  finalizeMeta?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): JsonValue | undefined
+  /**
    * Cooperative tool-call timeout budget in milliseconds. Omit for no deadline.
    * Enforced by `@deepseek-ai/dsh-tool-call-timeout-policy` (a `tools/execute` wrapper); it
    * is NEVER sent to the model — `schemas()` whitelists only name/description/
@@ -736,6 +743,15 @@ setExecutor(executor: ToolExecutor): () => void
 async execute(input: ToolBatchInput): Promise<ToolBatchResult>
 
 /**
+ * Accept a Host-owned Tool through the guarded pipeline and Session log.
+ * The supplied definition is never registered for model or PTC discovery.
+ * @param session - attached Session owning durable invocation evidence.
+ * @param input - invocation identity, attribution, arguments, and current definition.
+ * @returns durable acceptance and its observer-independent completion.
+ */
+async startHostCall(session: Session, input: { callId: ToolCallId definition: ToolDefinition arguments: unknown source: HostToolCallSource }): Promise<{ completion: Promise<HostToolResultData> }>
+
+/**
  * Register a monotonic denial in the calling scope.
  * @param guard - evaluated after extensible pre-execute policy by the shared pipeline.
  * @returns the effect disposer that removes this guard.
@@ -750,7 +766,7 @@ guard(guard: ToolGuard): () => void
 checkGuards(exec: ToolExecution): ToolGuardDenial | undefined
 ```
 
-Types: [ScopeKey](scope.zh.md)
+Types: [HostToolCallSource](session.zh.md) · [HostToolResultData](session.zh.md) · [ScopeKey](scope.zh.md) · [Session](session.zh.md) · [ToolCallId](core.zh.md)
 
 Source: [`packages/core/tools/src/index.ts`](../../packages/core/tools/src/index.ts)
 

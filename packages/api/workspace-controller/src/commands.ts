@@ -46,6 +46,7 @@ export class WorkspaceCommands {
   create(request: WorkspaceCreateRequest): Promise<WorkspaceCreateValue> {
     return this.enqueue(async () => {
       try {
+        await this.ctx.parallel('workspace/validate-directory', request.path)
         const existing = await this.ctx.workspaceRegistry.resolveByPath(request.path)
         if (existing !== undefined) {
           return { workspace: workspaceView(existing), created: false }

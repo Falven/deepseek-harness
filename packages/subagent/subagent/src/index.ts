@@ -37,7 +37,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
-import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
@@ -46,6 +46,7 @@ import {
   rejectPrompt, validateControlRequest,
 } from './control.ts'
 import type {
+  SubagentDelivery,
   SubagentInterruptReceipt,
   SubagentPromptReceipt,
   SubagentPromptRequest,
@@ -496,15 +497,27 @@ export class SubagentRuntime extends TypertRemoteService {
         content = await attachments.admitPromptContent(request.content)
       }
       return {
-        messageId: await this.requireManager().deliverPrompt(
-          childSessionId,
-          content,
-          { source, signal, delivery },
-        ),
+        messageId: await this.deliverHostPrompt(childSessionId, content, { source, signal, delivery }),
       }
     } catch (error: unknown) {
       return rejectPrompt(error, childSessionId, signal)
     }
+  }
+
+  /**
+   * Deliver content admitted by the Host with its recorded source.
+   * Subclasses must authorize the target and admit attachments before calling.
+   * @param childId - durable child Session identity.
+   * @param content - authorized model-visible content.
+   * @param options - delivery mode, recorded source, and cancellation before acceptance.
+   * @returns the inbox message identity, after native tree and input admission.
+   */
+  protected deliverHostPrompt(
+    childId: SessionId,
+    content: ContentBlock[],
+    options: { readonly delivery: SubagentDelivery; readonly source: MessageSource; readonly signal: AbortSignal },
+  ): Promise<MessageId> {
+    return this.requireManager().deliverPrompt(childId, content, options)
   }
 
   /**

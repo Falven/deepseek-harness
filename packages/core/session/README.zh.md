@@ -87,7 +87,7 @@ surface 事件（`system/message`、`developer/message`、`user/message`、`assi
 
 ### 派生会话的 fork
 
-`ctx.sessions.fork(source, boundary?, childSessionId?)` 从实时源会话复制包含切点的精确事件前缀（默认：最后一个事件）。`dsh-session/fork` 的 `buildForkSeed` 在复制事件之后放置继承标记，仅为开放步骤补缺失的错误工具结果，并以 `forked` 原因关闭步骤和轮次。已关闭的步骤与轮次保持原样，包括历史缺失结果。标记和结束事件属于子会话；`inheritedEventCount` 只统计复制的前缀。
+`ctx.sessions.fork(source, boundary?, childSessionId?)` 从实时源会话复制包含切点的精确事件前缀（默认：最后一个事件）。`dsh-session/fork` 的 `buildForkSeed` 在复制事件之后放置继承标记，仅为开放步骤补缺失的错误工具结果，将尚未解决的 Host 调用标记为未知结果而不转移其实时工作，并以 `forked` 原因关闭步骤和轮次。已关闭的步骤与轮次保持原样，包括历史缺失结果。标记和结束事件属于子会话；`inheritedEventCount` 只统计复制的前缀。
 
 被拒绝的 fork 抛出带 `SessionForkErrorCode` 的 `SessionForkError`；两者都从包根入口导出。
 
@@ -135,7 +135,7 @@ surface 事件（`system/message`、`developer/message`、`user/message`、`assi
 
 ### 共享恢复逻辑
 
-`ToolCallRecovery` 从已提交事件中跟踪尚无结果的请求，不保留事件历史。AgentLoop 观察实时步骤；崩溃恢复与 fork 种子构造通过 `openTurnClosers` 回放各自的前缀。实时失败与崩溃恢复默认使用中断结果文案；fork 构造传入 fork 原因，以选择其专用的重试指引。调用方在关闭步骤之前追加恢复结果（[参考](../agent-loop/README.zh.md)）。
+`ToolCallRecovery` 从已提交事件中跟踪尚无结果的请求，不保留事件历史。AgentLoop 观察实时步骤；崩溃恢复与 fork 种子构造通过 `openTurnClosers` 回放各自的前缀。实时失败与崩溃恢复默认使用中断结果文案；fork 构造传入 fork 原因，以选择其专用的重试指引。调用方在关闭步骤之前追加恢复结果（[参考](../agent-loop/README.zh.md)）。未解决的 Host 调用即使没有开放的助手轮次，也会得到未调度或未知的终结结果；恢复不会执行其主体。
 
 ### 派生历史
 

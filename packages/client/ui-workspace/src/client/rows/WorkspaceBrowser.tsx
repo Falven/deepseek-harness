@@ -1315,6 +1315,7 @@ export function WorkspaceBrowser({
                 type="button"
                 className={css.iconButton}
                 aria-label={t('workspace.add')}
+                data-sidebar-add-workspace
                 aria-keyshortcuts={addShortcut?.aria}
                 onClick={() => {
                   requestAddWorkspace()

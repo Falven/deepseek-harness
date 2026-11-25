@@ -377,3 +377,23 @@ it('places a selected tab\'s strip moved to another pane from that pane\'s last 
     restore()
   }
 })
+
+it('removes a tab immediately while its same connected body finishes cleanup', async () => {
+  const controller = seededController()
+  controller.setExpanded(true)
+  const tab = controller.openContent({ kind: 'app', contentId: 'app:a', title: 'App' })
+  const cleanup = Promise.withResolvers<undefined>()
+  const retireTab = vi.fn(() => cleanup.promise)
+  const h = mounted(controller, { keepMounted: () => true, retireTab })
+  const body = h.body(tab)
+  const parent = body.parentElement
+  act(() => { controller.closeTab(tab); h.redraw() })
+  expect(controller.getSnapshot().state.tabs[tab]).toBeUndefined()
+  expect(h.view.container.querySelector(`[data-dockkit-tab="${tab}"]`)).toBeNull()
+  expect(body.isConnected).toBe(true)
+  expect(body.parentElement).toBe(parent)
+  expect(body.closest('[data-dockkit-content]')).toHaveProperty('inert', true)
+  expect(retireTab).toHaveBeenCalledOnce()
+  await act(async () => { cleanup.resolve(undefined); await cleanup.promise })
+  expect(body.isConnected).toBe(false)
+})

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
   ChatConversationViewNode, ConversationNode,
@@ -33,6 +34,7 @@ afterEach(() => {
 })
 
 const t: ChatNodeViewProps['t'] = makeTranslate(zh, commonZh)
+const SID = SessionId('chat-branch-tails')
 const renderUserImages: Parameters<ReturnType<typeof createUserContentFixture>>[1] = () => null
 const userSlots: PropsRenderSlots<'conversation.chat.user.before'> = {
   renderSlot: () => null,
@@ -1097,7 +1099,7 @@ describe('useCalendarDay boundary refresh', () => {
 describe('small branch tails', () => {
   it('AssistantMarkdown single-line reasoning summary skips the newline cut', () => {
     const view = render(
-      <AssistantMarkdown renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
+      <AssistantMarkdown sessionId={SID} renderSlot={() => null} useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation}
         t={t}
         blocks={[{ kind: 'reasoning', text: 'one-liner' }]}

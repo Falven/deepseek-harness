@@ -1,20 +1,23 @@
 /** Per-Session turn recorder: snapshots, captures around file-tool edits, the turn-end diff, and the records kept until disposal. */
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { captureFile, sameCapture, type Capture } from './capture.ts'
 import { compareText } from './compare.ts'
+import type { WorkspaceChangesEnvironment } from './environment.ts'
 import {
-  blobText, diffTrees, gitlinkPaths, ignoredPaths, locateGitWorkspace, snapshotTree, treeBlob, type GitRunner, type GitWorkspace,
+  blobText, diffTrees, gitlinkPaths, ignoredPaths, locateGitWorkspace, snapshotTree, treeBlob, GitRunner, type GitWorkspace,
 } from './git.ts'
-import { canonicalPath, compareDisplay, displayPathOf, durablePathOf, isInside, isTemporaryPath, temporaryRoots, toPosix } from './paths.ts'
+import { compareDisplay, displayPathOf, durablePathOf, isInside, isTemporaryPath, toPosix } from './paths.ts'
 import type { WorkspaceChangedFile, WorkspaceChangesSummary, WorkspaceFileDiff } from './types.ts'
 
 /** Facts shared by every recorder of one plugin instance. */
 export interface RecorderEnvironment {
-  /** Resolves to the runner, or null when git is unavailable and no snapshot is taken. */
-  git: Promise<GitRunner | null>
+  /** Captures the Session directory's execution world inside its awaited recording queue. */
+  environment(cwd: string, signal: AbortSignal): Promise<WorkspaceChangesEnvironment>
+  /** Per-command Git timeout and retained output cap. */
+  timeoutMs: number
+  outputMaxBytes: number
   /** Directory that receives each Session's temporary directory. */
   tempRoot: string
   /** Maximum files carried by one summary. */
@@ -28,19 +31,19 @@ export interface RecorderEnvironment {
 }
 
 /** Canonical paths every comparison and display uses, resolved when a turn opens. */
-interface Paths {
-  /** Canonical Session directory for repository discovery and display paths. */
-  cwd: string
-  /** Canonical home directory abbreviated as `~` in display paths. */
-  home: string
-  /** Temporary roots whose files outside the workspace never enter a summary. */
-  temporaryRoots: readonly string[]
-}
+type Paths = WorkspaceChangesEnvironment['paths']
 
 /** The repository enclosing the working directory and the runner that snapshots it. */
 interface Repository {
   git: GitRunner
   workspace: GitWorkspace
+}
+
+/** One captured execution world and the Git resources kept for its records. */
+interface RecorderLocation {
+  environment: WorkspaceChangesEnvironment
+  repository?: Repository
+  gitScratch?: Promise<string>
 }
 
 /** The turn-start snapshot of a located repository. */
@@ -71,8 +74,8 @@ interface TurnState {
   readonly turn: number
   /** The Session directory the turn started in, as the directory service spells it. */
   readonly cwd: string
-  /** Canonical paths of that directory, resolved by the turn's baseline; undefined until then. */
-  paths: Paths | undefined
+  /** Execution world of the starting directory, captured before the turn's first tool. */
+  location: RecorderLocation | undefined
   /**
    * The turn-start snapshot once it exists. `null` means no repository or no git, so the turn summarizes file-tool
    * captures only; `'failed'` means the repository exists but its snapshot failed, so the turn records nothing.
@@ -89,7 +92,7 @@ interface TurnState {
 
 function freshState(turn: number, cwd: string): TurnState {
   return {
-    turn, cwd, paths: undefined, baseline: null, captures: new Map(), lastToolResultSeq: -1, attemptedAfterSeq: -1, recordedAfterSeq: -1,
+    turn, cwd, location: undefined, baseline: null, captures: new Map(), lastToolResultSeq: -1, attemptedAfterSeq: -1, recordedAfterSeq: -1,
   }
 }
 
@@ -117,12 +120,11 @@ export class TurnRecorder {
   private chain: Promise<void> = Promise.resolve()
   /** The open turn; before the first `turn/start` it is an empty placeholder no event can match. */
   private state = freshState(0, '')
-  /** Host facts shared by every turn, resolved by the first. */
-  private host: Pick<Paths, 'home' | 'temporaryRoots'> | undefined
-  /** Located repositories by canonical Session directory, reused across turns; an absent entry keeps retrying each turn. */
-  private readonly repositories = new Map<string, Repository>()
-  /** Temporary directory holding this Session's snapshot objects, scratch indexes, and captured copies. */
+  private readonly locations = new Map<string, RecorderLocation>()
+  /** Host temporary directory holding captured copies and local Git scratch files. */
   private scratch: Promise<string> | undefined
+  private disposal: Promise<void> | undefined
+  private readonly reads = new Set<Promise<unknown>>()
   /** Records by the sequence of the event that announced them. */
   private readonly records = new Map<number, TurnRecord>()
   private readonly lifetime = new AbortController()
@@ -153,9 +155,14 @@ export class TurnRecorder {
     this.state = state
     void this.enqueue(async (signal) => {
       try {
-        this.host ??= { home: await canonicalPath(homedir()), temporaryRoots: await temporaryRoots() }
-        state.paths = { cwd: await realpath(cwd), ...this.host }
-        const repository = await this.locate(state.paths.cwd, signal)
+        let location = this.locations.get(cwd)
+        if (location === undefined) {
+          location = { environment: await this.env.environment(cwd, signal) }
+          this.locations.set(cwd, location)
+        }
+        signal.throwIfAborted()
+        state.location = location
+        const repository = await this.locate(location, signal)
         if (repository === null) return
         const tree = await snapshotTree(repository.git, repository.workspace, signal)
         state.baseline = { ...repository, tree }
@@ -168,18 +175,19 @@ export class TurnRecorder {
   }
 
   /**
-   * Queue the capture of the path a file tool is about to mutate, before the
-   * tool runs; only the turn's first mutation of a path captures it. Await
-   * {@link settled} afterwards so the tool cannot overtake the capture.
-   * @param path - absolute process path of the filesystem provider's resolved mutation target.
+   * Queue a resolved mutation target before the provider writes it. Only the
+   * turn's first mutation of a path captures it. Await {@link settled} before
+   * the write so it cannot overtake the capture.
+   * @param path - absolute process path in the filesystem provider's execution world.
    */
   capture(path: string): void {
     const state = this.state
-    void this.enqueue(async () => {
-      if (state.paths === undefined) return
-      const absolute = await canonicalPath(path)
+    void this.enqueue(async (signal) => {
+      const environment = state.location?.environment
+      if (environment === undefined) return
+      const absolute = await environment.canonicalPath(path, signal)
       if (state.captures.has(absolute)) return
-      const capture = await captureFile(absolute, join(await this.scratchDir(), 'captures'), this.env.maxFileBytes)
+      const capture = await captureFile(absolute, join(await this.scratchDir(), 'captures'), this.env.maxFileBytes, environment.readFile, signal)
       if (capture !== undefined) state.captures.set(absolute, capture)
     })
   }
@@ -236,7 +244,14 @@ export class TurnRecorder {
    * @returns the comparison, or undefined for an unknown sequence or index, or once disposed.
    * @throws when a read fails while the recorder lives.
    */
-  async diff(seq: number, index: number, signal: AbortSignal): Promise<WorkspaceFileDiff | undefined> {
+  diff(seq: number, index: number, signal: AbortSignal): Promise<WorkspaceFileDiff | undefined> {
+    if (this.lifetime.signal.aborted) return Promise.resolve(undefined)
+    const read = this.compare(seq, index, signal).finally(() => { this.reads.delete(read) })
+    this.reads.add(read)
+    return read
+  }
+
+  private async compare(seq: number, index: number, signal: AbortSignal): Promise<WorkspaceFileDiff | undefined> {
     const record = this.records.get(seq)
     const file = record?.summary.files[index]
     const sources = record?.sources[index]
@@ -260,11 +275,28 @@ export class TurnRecorder {
    * Abort queued work, forget every record, and remove the temporary directory.
    * @returns once the temporary directory is gone.
    */
-  async dispose(): Promise<void> {
-    this.lifetime.abort()
-    this.records.clear()
-    await this.chain
-    if (this.scratch !== undefined) await rm(await this.scratch, { recursive: true, force: true })
+  dispose(): Promise<void> {
+    this.disposal ??= (async () => {
+      this.lifetime.abort()
+      this.records.clear()
+      await this.chain
+      await Promise.allSettled(this.reads)
+      const cleanups = [...this.locations.values()].map(async ({ environment, gitScratch }) => {
+        try {
+          if (gitScratch !== undefined) await environment.scratch.remove(await gitScratch)
+        } finally {
+          await environment.dispose()
+        }
+      })
+      if (this.scratch !== undefined) {
+        cleanups.push(this.scratch.then(path => rm(path, { recursive: true, force: true })))
+      }
+      this.locations.clear()
+      const settled = await Promise.allSettled(cleanups)
+      const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+      if (failures.length > 0) throw new AggregateError(failures, 'Workspace change recorder cleanup failed.')
+    })()
+    return this.disposal
   }
 
   private enqueue(task: (signal: AbortSignal) => Promise<void>): Promise<void> {
@@ -287,20 +319,27 @@ export class TurnRecorder {
 
   /** This Session's temporary directory, created on first use. */
   private scratchDir(): Promise<string> {
-    this.scratch ??= mkdtemp(join(this.env.tempRoot, 'dsh-workspace-changes-'))
+    this.scratch ??= mkdtemp(join(this.env.tempRoot, 'dsh-workspace-changes-')).then(path => realpath(path))
     return this.scratch
   }
 
   /** The repository enclosing one Session directory, located once per directory; null keeps retrying each turn. */
-  private async locate(cwd: string, signal: AbortSignal): Promise<Repository | null> {
-    const located = this.repositories.get(cwd)
-    if (located !== undefined) return located
-    const git = await this.env.git
-    if (git === null) return null
-    const workspace = await locateGitWorkspace(git, cwd, () => this.scratchDir(), signal)
+  private async locate(location: RecorderLocation, signal: AbortSignal): Promise<Repository | null> {
+    if (location.repository !== undefined) return location.repository
+    const { environment } = location
+    if (environment.git === null) return null
+    const git = new GitRunner(environment.git.subprocess, environment.git.executable, this.env, environment.git.signal)
+    const scratchDir = (): Promise<string> => {
+      if (environment.gitTempRoot === undefined) return this.scratchDir()
+      location.gitScratch ??= environment.scratch.mkdtemp(join(environment.gitTempRoot, 'dsh-workspace-changes-'))
+      return location.gitScratch
+    }
+    const workspace = await locateGitWorkspace(
+      git, environment.paths.cwd, scratchDir, signal, environment.scratch, path => Promise.resolve(path), environment.gitPaths,
+    )
     if (workspace === null) return null
     const repository = { git, workspace }
-    this.repositories.set(cwd, repository)
+    location.repository = repository
     return repository
   }
 
@@ -320,9 +359,10 @@ export class TurnRecorder {
   }
 
   private async record(state: TurnState, signal: AbortSignal): Promise<void> {
-    const { paths } = state
     const { baseline } = state
-    if (paths === undefined || baseline === 'failed' || state.lastToolResultSeq < 0) return
+    const environment = state.location?.environment
+    if (environment === undefined || baseline === 'failed' || state.lastToolResultSeq < 0) return
+    const { paths } = environment
     state.attemptedAfterSeq = state.lastToolResultSeq
     // Without a snapshot the working directory itself bounds the workspace.
     const root = baseline?.workspace.root ?? paths.cwd
@@ -363,7 +403,7 @@ export class TurnRecorder {
         : !isTemporaryPath(absolute, paths.temporaryRoots)
       if (!uncovered) continue
       const before = state.captures.get(absolute) as Capture
-      const after = await captureFile(absolute, join(await this.scratchDir(), 'captures'), this.env.maxFileBytes)
+      const after = await captureFile(absolute, join(await this.scratchDir(), 'captures'), this.env.maxFileBytes, environment.readFile, signal)
       if (after === undefined || sameCapture(before, after)) continue
       listed.set(absolute, await this.compared(paths, root, absolute, before, after))
     }

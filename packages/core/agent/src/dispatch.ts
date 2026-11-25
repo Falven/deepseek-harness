@@ -6,7 +6,7 @@
  * @module @deepseek-ai/dsh-agent/dispatch
  */
 
-import type { Context, Events } from '@deepseek-ai/cordis'
+import { isBailed, type Context, type Events } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
@@ -61,6 +61,20 @@ export interface AgentEventDispatch {
    * @param payload - the event's payload fields; `agent` is injected.
    */
   emit<K extends AgentSubjectEvent>(name: K, payload: PayloadRest<K>): void
+  /**
+   * Run synchronous inbox admission before the durable splice. Listener
+   * failure refuses insertion and propagates the original error to its caller.
+   * @param payload - the exact candidate message and its producer-declared role.
+   */
+  admitInbox(payload: PayloadRest<'agent/inbox/admit'>): void
+  /**
+   * Await preparation listeners in order while leaving an unsubscribed boundary
+   * synchronous. Ordinary Agent wakeup and claim order applies without probes.
+   * @param name - scoped turn or step preparation event.
+   * @param payload - event fields, with the Agent supplied by the dispatcher.
+   * @returns listener settlement, or undefined when no listener was registered.
+   */
+  prepare<K extends 'agent/before-turn' | 'agent/prepare-step'>(name: K, payload: PayloadRest<K>): Promise<void> | undefined
   /**
    * Awaited in-order dispatch (Cordis `serial`) in the agent's scope.
    * @param name - the agent-subject event to dispatch.
@@ -117,6 +131,19 @@ export function agentEvents(ctx: Context, agent: Agent, carrier: Scoped<Agent> =
     // `agent` field can never override the injected subject.
     ({ ...payload, agent } as PayloadOf<K>)
   return {
+    admitInbox(payload) {
+      ctx.emit(carrier, 'agent/inbox/admit', fused<'agent/inbox/admit'>(payload))
+    },
+    prepare(name, payload) {
+      const args: unknown[] = [carrier, name, fused(payload)]
+      const callbacks = ctx.events.dispatch('serial', args)
+      if (callbacks.length === 0) return
+      return (async () => {
+        for (const callback of callbacks) {
+          if (isBailed(await callback(...args))) return
+        }
+      })()
+    },
     emit(name, payload) {
       // Cordis emit invokes callbacks through Array.map: one synchronous throw
       // starves later listeners, and returned promises are discarded. Agent

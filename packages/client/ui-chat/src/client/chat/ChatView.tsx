@@ -105,7 +105,7 @@ export function ChatView({
   const directory = useSessions(s => selectSessionDirectory(s, sessionId))
   const fileImages = useMemo(() => ({
     fileDrag,
-    resolve: (path: string) => fileMediaUrl(document.baseURI, resolveWorkspacePath(directory, path)),
+    resolve: (path: string) => fileMediaUrl(document.baseURI, resolveWorkspacePath(directory, path), sessionId),
     resourceAddress: (path: string) => sessionFileAddress(sessionId, resolveWorkspacePath(directory, path)),
     labels: {
       open: t('image.open'), loading: t('image.loading'), failed: t('image.failed'),
@@ -233,7 +233,8 @@ export function ChatView({
   const flowContext = useMemo<ChatFlowHookContext>(() => ({ motion: scroll.motion }), [scroll.motion])
 
   return (
-    <div className={css.frame}>
+    <div className={css.frame} data-chat-loading={openState === 'loading'}>
+      {openState === 'loading' && <div className={css.hint} role="status" aria-atomic="true">{t('chat.loadingHistory')}</div>}
       {scroll.initialized && (
         <TurnNavigator
           items={railItems}
@@ -249,7 +250,6 @@ export function ChatView({
           <div ref={scroll.columnRef} className={css.column} data-chat-flow=""
             data-chat-motion={deferCompletedTurns && scroll.initialized
               && (running || motionTail || pendingInputs.length > 0) ? '' : undefined}>
-            {openState === 'loading' && <div className={css.hint}>{t('chat.loadingHistory')}</div>}
             {openState === 'error' && openError !== null && (
               <div className={css.openError}>
                 {t('chat.loadError', { message: openError.message, code: openError.code })}

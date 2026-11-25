@@ -28,7 +28,7 @@ import type { QueueAction } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/types'
 import type { ComposerBlocks } from './contract/composer-blocks.ts'
 import type {
-  DraftAttachmentId, DraftAttachmentSerializationResult, SessionInputResolver, SubmitAttachment, SubmitOutcome,
+  DraftAttachmentId, DraftAttachmentSerializationResult, PreparedPromptContent, SessionInputResolver, SubmitAttachment, SubmitOutcome,
 } from './contract/input.ts'
 import type { InputSubmitMode } from './contract/composer-submission.ts'
 
@@ -217,6 +217,26 @@ export class ConversationController extends Service implements IConversation {
     if (!result.ok) throw new Error(`conversation.send failed: ${result.error.code}: ${result.error.message}`)
   }
 
+  /** Capture local context at submit time, then apply it to serialized prompt content.
+   * @param sessionId - Session receiving the submitted content.
+   * @returns a one-use content preparation function for the pending submission.
+   */
+  prepareContent(sessionId: SessionId): PreparedPromptContent {
+    const content = Promise.withResolvers<Parameters<SessionFace['prompt']>[0]>()
+    const prepared = new Promise<Parameters<SessionFace['prompt']>[0]>((resolve) => {
+      resolve(this.ctx.waterfall('conversation/prepare-content', { sessionId }, () => content.promise))
+    }).then(
+      value => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    )
+    return async (value) => {
+      content.resolve(value)
+      const outcome = await prepared
+      if (!outcome.ok) throw outcome.error
+      return outcome.value
+    }
+  }
+
   /**
    * Submit ordered draft attachments with text through one host admission. A
    * local submission echo is registered first and enters the session snapshot
@@ -234,6 +254,7 @@ export class ConversationController extends Service implements IConversation {
    * @param mode - queue or steer delivery selected by composer policy.
    * @param signal - optional cancellation for the complete Host admission.
    * @param accept - called inside the Session's acceptance, before the echo renders, so the composer settles with it.
+   * @param prepareContent - optional preparation captured when the draft was submitted.
    * @returns the Host admission outcome; local attachment preparation failures reject.
    */
   async sendSession(
@@ -243,6 +264,7 @@ export class ConversationController extends Service implements IConversation {
     mode: InputSubmitMode,
     signal?: AbortSignal,
     accept?: () => void,
+    prepareContent?: PreparedPromptContent,
   ): Promise<SubmitOutcome> {
     const attachments = this.resolveDraftAttachments(attachmentIds)
     if (attachments.length !== attachmentIds.length) {
@@ -282,6 +304,7 @@ export class ConversationController extends Service implements IConversation {
           : { type: 'file' as const, receiptId }
       }),
     )
+    const prepare = prepareContent ?? this.prepareContent(session.sessionId)
     // The composer owns the attachments until the Host accepts the prompt.
     const ownership = { accepted: false, retiredUnobserved: false }
     const acceptance = Promise.withResolvers<undefined>()
@@ -304,7 +327,7 @@ export class ConversationController extends Service implements IConversation {
     try {
       await nextPaint()
       const uploaded = await serializeAttachments()
-      content = [...uploaded, ...(text === '' ? [] : [{ type: 'text' as const, text }])]
+      content = await prepare([...uploaded, ...(text === '' ? [] : [{ type: 'text' as const, text }])])
     } catch (error) {
       submission.abandon()
       throw error

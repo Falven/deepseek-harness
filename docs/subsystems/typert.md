@@ -697,4 +697,42 @@ async stream(request: InvokeRemoteRequest): Promise<AsyncIterable<unknown>>
 ```
 
 Source: [`packages/api/gateway/src/index.ts`](../../packages/api/gateway/src/index.ts)
+
+<a id="typert-gateway-events"></a>
+
+### `typert-gateway/*` events
+
+<a id="typert-gatewayremote-event-result--serial"></a>
+
+#### `typert-gateway/remote-event-result` — serial
+
+Admit the winning Client result before resolving its Host waterfall.
+
+```ts cordis-catalog
+/**
+ * Admit the winning Client result before resolving its Host waterfall.
+ * @param result - original event and winning value.
+ * @mode serial
+ */
+'typert-gateway/remote-event-result'(result: TypertRemoteEventResult): Promise<void>
+```
+
+Source: [`packages/api/gateway/src/types.ts`](../../packages/api/gateway/src/types.ts)
+
+<a id="typert-gatewaystream-request--waterfall"></a>
+
+#### `typert-gateway/stream-request` — waterfall
+
+Scope each WebSocket logical stream to its admitted HTTP upgrade request.
+
+```ts cordis-catalog
+/**
+ * Scope each WebSocket logical stream to its admitted HTTP upgrade request.
+ * @param request - HTTP request that established the logical stream.
+ * @mode waterfall
+ */
+'typert-gateway/stream-request'(request: IncomingMessage, next: () => Promise<void>): Promise<void>
+```
+
+Source: [`packages/api/gateway/src/types.ts`](../../packages/api/gateway/src/types.ts)
 <!-- END GENERATED cordis-surface -->

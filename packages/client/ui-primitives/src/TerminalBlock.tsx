@@ -252,7 +252,7 @@ export function TerminalBlock({
                   command is enough), so repeating the label down the rows would
                   assert a directory per line that nothing here knows. Later
                   rows keep a bare `$` to stay aligned as prompts. */}
-              <span className={css.cwd} data-terminal-prompt="">
+              <span className={css.cwd} data-terminal-prompt="" title={index === 0 ? cwd : undefined}>
                 {index > 0 || cwd === undefined ? '$' : promptLabel(cwd, home)}
               </span>
               <CommandText className={css.command} text={line} label={copy.commandLine(index + 1)} />

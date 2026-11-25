@@ -40,6 +40,8 @@ kind: "package-reference"
 
 每个 Host RPC 方法与 WebSocket 流都要求认证 Peer。独立的 [`dsh-host-authentication-token`](../../host/authentication-token/README.zh.md) 插件拥有默认 Token 验证、Cookie 交换与签名入口 URL 贡献；启动发布归 WebApp。Connection 通过同步 `webserver/authorize` 集中提供来源与凭据决策；WebServer 执行匹配路由的 `auth` 并直接传入选定 Peer。`frontend-static` 声明 index 认证访问及资源匿名访问。匿名路由免凭据验证，但仍经过活动 Connection 的来源检查。
 
+`authMode: external` 要求 `webserver.externalAdmission: true`。对于通过应用准入的 HTTP 或升级请求，Connection 仍检查 Host 和 Origin，并采用已注册验证器提供的存活 Peer。若验证器均未识别该请求，Connection 仅为 Web 分发提供共享 owner Peer。验证器故障仍返回 503。应用准入负责提供请求身份并执行授权。
+
 Host Connection 插件将同包的 `ConnectionAuthentication` 挂载为独立嵌套服务 `connection.authentication`。插件注入 `connection.authentication`，通过 `ctx.connection.authentication.register(provider)` 注册 `AuthenticationProvider` 对象。验证器同步返回已有且存活的 `PeerScope` 或 `undefined`。`connection.authentication.authenticate(request)` 返回 `PeerAdmission`，按注册顺序采用首个成功结果；此方法只验证凭据，不处理 HTTP 响应或来源策略。异常仍允许后续 Provider 成功；全部失败时，有异常返回503，普通拒绝返回401。注册归调用插件，Peer 归创建者。请求不含页面/API purpose；Token v2 Cookie 可认证两者，principal 与 RemoteAccess 决定操作权限。
 
 Token 插件拥有既有 `client-connection/browser-session` 凭据记录、Cookie 签名、authority 绑定、有效期与 TLS 属性。它的 `cookieMaxAgeDays` 配置默认为30，在激活时加载签名密钥。Provider 注册表归 ConnectionAuthentication，Token 与 Cookie 算法保留在各自 Provider 内部。凭据协议与撤销规则由各注册实现负责，参见[默认 Token 实现](../../host/authentication-token/README.zh.md)。

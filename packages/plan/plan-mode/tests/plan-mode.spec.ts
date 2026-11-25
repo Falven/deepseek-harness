@@ -60,6 +60,7 @@ async function agentWithSession(
     id: brandString<SessionId>(id),
     session,
     options: {},
+    changeSettings: async (_change: unknown, apply: () => boolean) => apply(),
     inject(message: UserMessage) {
       session.append('user/message', message, { surfaceOp: 'append' })
     },
@@ -621,9 +622,9 @@ describe('/plan', () => {
     const plain = await ctx.commands.execute(plainAgent, '/plan', [], signal)
     expect(plain?.result).toEqual({
       kind: 'success',
-      text: 'Entering plan mode (applies from the next step). Use /plan off to leave.',
+      text: 'Plan mode on. Use /plan off to leave.',
     })
-    expect(ctx.planMode.get(plainAgent)).toEqual({ active: false, pending: true })
+    expect(ctx.planMode.get(plainAgent)).toEqual({ active: true })
     expect(plainSteer).not.toHaveBeenCalled()
 
     const messageAgent = await agentWithSession(ctx, 'message-plan-command')
@@ -633,9 +634,9 @@ describe('/plan', () => {
     const plan = await ctx.commands.execute(messageAgent, '/plan   draft the migration  ', [], signal)
     expect(plan?.result).toEqual({
       kind: 'success',
-      text: 'Entering plan mode (applies from the next step). Use /plan off to leave.',
+      text: 'Plan mode on. Use /plan off to leave.',
     })
-    expect(ctx.planMode.get(messageAgent)).toEqual({ active: false, pending: true })
+    expect(ctx.planMode.get(messageAgent)).toEqual({ active: true })
     expect(messageSteer).toHaveBeenCalledExactlyOnceWith({
       id: expect.any(String) as unknown,
       role: 'user',
@@ -644,7 +645,7 @@ describe('/plan', () => {
     })
   })
 
-  it('leaves active plan mode, cancels a pending entry, and treats inactive exit as idempotent', async () => {
+  it('commits each selected mode and treats inactive exit as idempotent', async () => {
     const ctx = await setup()
     await ctx.plugin(CommandRuntime)
     await new Promise(resolve => setImmediate(resolve))
@@ -661,22 +662,22 @@ describe('/plan', () => {
     ;(entering as unknown as { steer: typeof enteringSteer }).steer = enteringSteer
     await ctx.commands.execute(entering, '/plan', [], signal)
     expect((await ctx.commands.execute(entering, '/plan off', [], signal))?.result)
-      .toEqual({ kind: 'success', text: 'Plan mode entry cancelled.' })
-    expect(ctx.planMode.get(entering)).toEqual({ active: false, pending: false })
+      .toEqual({ kind: 'success', text: 'Plan mode off.' })
+    expect(ctx.planMode.get(entering)).toEqual({ active: false })
     expect(enteringSteer).not.toHaveBeenCalled()
     await boundary(ctx, entering, 'step-start')
     expect(ctx.planMode.get(entering)).toEqual({ active: false })
-    expect(entering.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
+    expect(entering.session.snapshotEvents().filter(event => event.type === 'plan/mode')).toHaveLength(2)
 
     const active = await agentWithSession(ctx, 'active-plan-command', { active: true })
     openTurn(active.session)
     const activeSteer = vi.fn()
     ;(active as unknown as { steer: typeof activeSteer }).steer = activeSteer
     expect((await ctx.commands.execute(active, '/plan off', [], signal))?.result)
-      .toEqual({ kind: 'success', text: 'Leaving plan mode (applies from the next step).' })
-    expect(ctx.planMode.get(active)).toEqual({ active: true, pending: false })
+      .toEqual({ kind: 'success', text: 'Plan mode off.' })
+    expect(ctx.planMode.get(active)).toEqual({ active: false })
     expect((await ctx.commands.execute(active, '/plan off', [], signal))?.result)
-      .toEqual({ kind: 'success', text: 'Leaving plan mode (applies from the next step).' })
+      .toEqual({ kind: 'success', text: 'Plan mode is already inactive.' })
     expect(activeSteer).not.toHaveBeenCalled()
     await boundary(ctx, active, 'step-start')
     expect(ctx.planMode.get(active)).toEqual({ active: false })
@@ -757,7 +758,7 @@ describe('/plan', () => {
     const bareSteer = vi.fn()
     ;(bareAgent as unknown as { steer: typeof bareSteer }).steer = bareSteer
     expect((await ctx.commands.execute(bareAgent, '/plan', attachments, signal))?.result)
-      .toEqual({ kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' })
+      .toEqual({ kind: 'success', text: 'Plan mode on. Use /plan off to leave.' })
     expect(bareSteer).toHaveBeenCalledExactlyOnceWith({
       id: expect.any(String) as unknown,
       role: 'user',
@@ -767,7 +768,7 @@ describe('/plan', () => {
       ],
       source: { kind: 'user' },
     })
-    expect(ctx.planMode.get(bareAgent)).toEqual({ active: false, pending: true })
+    expect(ctx.planMode.get(bareAgent)).toEqual({ active: true })
 
     const activeAgent = await agentWithSession(ctx, 'imaged-off-plan-command', { active: true })
     const offSteer = vi.fn()

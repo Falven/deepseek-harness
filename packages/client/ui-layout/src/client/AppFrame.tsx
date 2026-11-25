@@ -32,14 +32,14 @@ export interface AppFrameInjected {
 /** Full composed props: runtime, child slots, store, locale, and injected posture. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
-  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading'>
+  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.header' | 'shell.overlay' | 'shell.leading'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
   & InjectFace<AppFrameInjected>
 
 /** Center column grid item (session-body building block). */
 function CenterColumn(props: { children?: ReactNode; inert: boolean }) {
-  return <div className={css.centerCol} inert={props.inert}>{props.children}</div>
+  return <div className={css.centerCol} data-dsh-column="main" inert={props.inert}>{props.children}</div>
 }
 
 /** Subscribe to the main key without subscribing the column frame to each panel id. */
@@ -258,7 +258,8 @@ export function AppFrame({
   const onRightbarDrag = useCallback((dx: number) => {
     actions.setRightbar(rightbarBase.current - dx)
   }, [actions])
-  const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
+  const productTitle = document.querySelector<HTMLMetaElement>('meta[name="application-name"]')?.content
+    ?? process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
   // The rendered template lets the grid solve the squeeze natively: the centre
   // declares its protected minimum and the right column bids up to the clamped
   // preference, so a window resize lands in the same layout pass as the frame
@@ -286,58 +287,62 @@ export function AppFrame({
   const leadingMounted = drawer || darwin && sidebarCollapsed
 
   return (
-    <div
-      ref={frameRef}
-      className={css.frame}
-      style={{
-        ...(windowsTitlebar
-          ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns:
-          `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
-      }}
-      data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-sidebar-drawer={drawer || undefined}
-      data-sidebar-instant={drawer && sidebarCollapsed && sidebarTransition.instant || undefined}
-      data-rightbar-collapsed={cols.rightbar === 0 || undefined}
-      data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
-      data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
-      data-dragging={dragging || undefined}
-      data-animating={animateTracks || undefined}
-    >
-      <DocumentTitle
-        productTitle={productTitle}
-        useSessions={useSessions}
-        usePanelInfo={usePanelInfo}
-      />
-      {drawer && <div className={css.drawerMask} data-sidebar-mask aria-hidden="true"
-        onClick={drawerOpen ? () => { actions.toggleSidebar() } : undefined} />}
-      <div className={css.sidebarCol}
-        style={drawer ? { width: sidebarWidth } : undefined}
-        inert={drawer && sidebarCollapsed}>
-        {sidebar}
-      </div>
-      <>
-        <CenterColumn inert={drawerOpen}>{main}</CenterColumn>
-        <RightbarColumn inert={drawerOpen}>
-          {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0 })}
-        </RightbarColumn>
-      </>
-      <div className={css.bottomRow} data-shell-bottom inert={drawerOpen}>
-        {renderSlot('shell.bottom', {})}
-      </div>
-      <div className={css.overlayLayer} data-shell-overlay>
-        {overlays}
-      </div>
-      {leadingMounted && (
-        <div className={css.leadingSeat} data-shell-leading inert={drawerOpen}>
-          {leading}
+    <div className={css.shell} data-dsh-shell>
+      <div className={css.header} data-dsh-header inert={drawerOpen}>{renderSlot('shell.header', {})}</div>
+      <div
+        ref={frameRef}
+        className={css.frame}
+        data-dsh-frame
+        style={{
+          ...(windowsTitlebar
+            ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
+          gridTemplateColumns:
+            `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
+        }}
+        data-sidebar-collapsed={sidebarCollapsed || undefined}
+        data-sidebar-drawer={drawer || undefined}
+        data-sidebar-instant={drawer && sidebarCollapsed && sidebarTransition.instant || undefined}
+        data-rightbar-collapsed={cols.rightbar === 0 || undefined}
+        data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
+        data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
+        data-dragging={dragging || undefined}
+        data-animating={animateTracks || undefined}
+      >
+        <DocumentTitle
+          productTitle={productTitle}
+          useSessions={useSessions}
+          usePanelInfo={usePanelInfo}
+        />
+        {drawer && <div className={css.drawerMask} data-sidebar-mask aria-hidden="true"
+          onClick={drawerOpen ? () => { actions.toggleSidebar() } : undefined} />}
+        <div className={css.sidebarCol} data-dsh-column="sidebar"
+          style={drawer ? { width: sidebarWidth } : undefined}
+          inert={drawer && sidebarCollapsed}>
+          {sidebar}
         </div>
-      )}
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!drawer && !centeredSidebar && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
-        <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
-      )}
+        <>
+          <CenterColumn inert={drawerOpen}>{main}</CenterColumn>
+          <RightbarColumn inert={drawerOpen}>
+            {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0 })}
+          </RightbarColumn>
+        </>
+        <div className={css.bottomRow} data-shell-bottom inert={drawerOpen}>
+          {renderSlot('shell.bottom', {})}
+        </div>
+        <div className={css.overlayLayer} data-shell-overlay>
+          {overlays}
+        </div>
+        {leadingMounted && (
+          <div className={css.leadingSeat} data-shell-leading inert={drawerOpen}>
+            {leading}
+          </div>
+        )}
+        {/* The collapsed rail is fixed-width: no resize handle while closed. */}
+        {!drawer && !centeredSidebar && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+        {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
+          <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
+        )}
+      </div>
     </div>
   )
 }

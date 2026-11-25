@@ -1,4 +1,17 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  flex: none;
+}
+
 .frame {
+  flex: 1;
+  min-height: 0;
   position: relative; /* anchors the drag handles, which straddle column borders */
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;

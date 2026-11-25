@@ -962,10 +962,19 @@ describe('completion notices', () => {
     const inject = vi.fn()
     const owner = await fakeAgent(ctx, 'sess-1', { inject })
     const p = producer({ owner: owner.id, label: 'pnpm test' })
-    ctx.jobs.start(p.spec)
-
+    const started = ctx.jobs.start(p.spec)
+    let intercepted = false
+    ctx.on('tool-jobs/completion-message', ({ owner: destination, job, message }, next) => {
+      expect(destination).toBe(owner)
+      expect(job.id).toBe(started)
+      expect(inject).not.toHaveBeenCalled()
+      next()
+      expect(inject.mock.calls[0]?.[0]).toBe(message)
+      intercepted = true
+    })
     p.settle({ status: 'completed', detail: 'exit code: 0' })
     await tick()
+    expect(intercepted).toBe(true)
     expect(inject).toHaveBeenCalledTimes(1)
     expect(inject).toHaveBeenCalledWith({
       id: expect.any(String) as unknown,

@@ -29,6 +29,7 @@ function props(
   owners?: ToolCallOwnerProps[],
 ): ToolTreeProps {
   const snapshot = {} as SessionSnapshot
+  const jobs = { rows: {}, observed: {} }
   const useSession = ((selector: (value: SessionSnapshot) => unknown) => selector(snapshot)) as ToolTreeProps['useSession']
   const renderSlot = ((_key: string, owner: ToolCallOwnerProps, options?: { fallback?: React.ReactNode }) => {
     owners?.push(owner)
@@ -36,6 +37,9 @@ function props(
   }) as unknown as ToolTreeProps['renderSlot']
   const fixture: Partial<ToolTreeProps> = {
     useDisclosure,
+    useJobs: selector => selector(jobs),
+    watchJobs: () => () => {},
+    observeJob: () => () => {},
     useTurnData: () => undefined,
     useSession,
     renderSlot,

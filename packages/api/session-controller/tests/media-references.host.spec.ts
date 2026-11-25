@@ -6,6 +6,9 @@ import { Context } from '@deepseek-ai/cordis'
 import { FsError, type FsTargetKey, type FsVersion } from '@deepseek-ai/dsh-fs'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
+import SessionStore, { type SessionId } from '@deepseek-ai/dsh-session'
+import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+import WorkspaceFiles from '@deepseek-ai/dsh-api-workspace-files'
 import { SessionMediaReferences } from '../src/media-references.ts'
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
@@ -42,13 +45,18 @@ describe('SessionMediaReferences /api/file', () => {
       },
     } as never)
     ctx.provide('attachments', { imageLimits: { maxImageBytes: maxBytes } } as never)
+    ctx.provide('sandboxPolicy', { workspaceRoot: root, resolve: () => ({ workspaceRoot: root }) } as never)
     await ctx.plugin(LocalFileSystem, { cwd: root }).await()
+    await ctx.plugin(SessionStore).await()
+    await ctx.plugin(TypertRegistry).await()
+    ctx.sessions.create(brandString<SessionId>('media-session'), { meta: { cwd: root, origin: 'subagent' } })
+    await ctx.plugin(WorkspaceFiles, WorkspaceFiles.Config()).await()
     await ctx.plugin(SessionMediaReferences).await()
     const raw = (url: string, init?: RequestInit) => {
       if (handler === undefined) throw new Error('route not registered')
       return handler(new Request(url, init))
     }
-    const url = (path: string) => `http://127.0.0.1/api/file?path=${encodeURIComponent(path)}`
+    const url = (path: string) => `http://127.0.0.1/api/file?path=${encodeURIComponent(path)}&sessionId=media-session`
     return {
       /** Request a path and follow its version redirect, as an image element does. */
       call: async (path: string, init?: RequestInit) => {
@@ -58,6 +66,7 @@ describe('SessionMediaReferences /api/file', () => {
       },
       url,
       raw,
+      ctx,
       fs: ctx.fs as LocalFileSystem,
       unregister,
       dispose: () => ctx.fiber.dispose(),
@@ -139,7 +148,7 @@ describe('SessionMediaReferences /api/file', () => {
     expect(first.body).toBeNull()
     const location = new URL(first.headers.get('location')!, route.url(path))
     expect(location.pathname).toBe('/api/file')
-    expect([...location.searchParams.keys()]).toEqual(['path', 'v'])
+    expect([...location.searchParams.keys()]).toEqual(['path', 'sessionId', 'v'])
     expect(location.searchParams.get('path')).toBe(path)
     const versioned = await route.raw(location.href)
     expect(versioned.status).toBe(200)
@@ -184,6 +193,8 @@ describe('SessionMediaReferences /api/file', () => {
   it('rejects malformed paths, absent files, and directories', async () => {
     const route = await mount()
     expect((await route.raw('http://127.0.0.1/api/file')).status).toBe(400)
+    expect((await route.raw('http://127.0.0.1/api/file?path=/tmp/image.png')).status).toBe(400)
+    expect((await route.raw('http://127.0.0.1/api/file?path=/tmp/image.png&sessionId=missing')).status).toBe(404)
     for (const path of ['', 'relative.png', '/a\0b.png']) {
       expect((await route.call(path)).status).toBe(400)
     }
@@ -221,11 +232,17 @@ describe('SessionMediaReferences /api/file', () => {
 
   it('reads opaque remote targets through ctx.fs and preserves provider failures', async () => {
     const route = await mount()
-    const target = { targetKey: brandString<FsTargetKey>('opaque-remote-id'), displayPath: '/remote/photo.png' }
-    vi.spyOn(route.fs, 'resolve').mockResolvedValue(target)
+    const path = '/remote/photo.png'
+    route.ctx.provide('webServer', { requiresExternalAdmission: true } as never)
+    route.ctx.on('workspace-files/resolve-workspace-root', async () => '/sandbox/media-session')
+    const target = { targetKey: brandString<FsTargetKey>('opaque-remote-id'), displayPath: path }
+    const resolve = vi.spyOn(route.fs, 'resolve').mockResolvedValue(target)
     vi.spyOn(route.fs, 'stat').mockResolvedValue({ type: 'file', version: brandString<FsVersion>('r1') })
     const read = vi.spyOn(route.fs, 'readBytes').mockResolvedValue(PNG_BYTES)
-    expect(await responseBytes(await route.call('/remote/photo.png'))).toEqual(PNG_BYTES)
+    const response = await route.call(path)
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(await responseBytes(response)).toEqual(PNG_BYTES)
+    expect(resolve).toHaveBeenCalledWith(path, expect.objectContaining({ cwd: '/sandbox/media-session' }))
     expect(read).toHaveBeenCalledWith(target, expect.any(AbortSignal), DEFAULT_LIMIT)
     for (const [code, status] of [
       ['FS_PERMISSION_DENIED', 403], ['FS_SANDBOX_DENIED', 403], ['FS_NOT_FOUND', 404],

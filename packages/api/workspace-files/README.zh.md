@@ -1,5 +1,5 @@
 ---
-description: "面向 Web GUI 的工作区文件服务：有界文件读取、按目标监听文件系统变化，以及 Session 工作区根内的目录列举与按名称或路径搜索。"
+description: "面向 Web GUI 的工作区文件服务：有界文件读取、按目标监听文件系统变化，以及 目录列举与限定于 Session 工作区的名称或路径搜索。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可从 Web Client 预览 Session 文件系统允许读取的文件。它按页读取 UTF-8 文本、按有界窗口或完整文件读取原始字节、从基文件目录解析关联文件，并报告文件元数据。可以跟随一个文件或一个目录直接子项的变化。可以按名称或相对路径搜索工作区条目。文件读取和监听可以指向工作区外路径；目录列举、搜索和目录监听仍限定于工作区。本服务不提供修改操作。
+使用本包可从 Web Client 预览 Session 文件系统允许读取的文件。它按页读取 UTF-8 文本、按有界窗口或完整文件读取原始字节、从基文件目录解析关联文件，并报告文件元数据。可以跟随一个文件或一个目录直接子项的变化。可以按名称或相对路径搜索工作区条目。文件读取、目录列举和变化监听都沿用 Session 文件系统的读取权限。搜索仍限定于该 Session 的工作区。本服务不提供修改操作。
 
 ## 目录
 
@@ -25,20 +25,20 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-把本包与 `dsh-fs`、`dsh-sandbox-policy`、Session store 和 Typert Gateway 一起挂载；bundle 把它紧随 Session Controller 之后挂载。每个方法都在线路上携带 Session 身份，Client 调用 `remote.workspaceFiles.read(sessionId, path, range, signal)`、`stat(sessionId, path, signal)`、`readBytes(sessionId, path, options, signal)`、`list(sessionId, path, signal)`、`search(sessionId, request, signal)` 或 `changes(sessionId, path, signal)`，从不自己指定根。Host 对 live Session 使用沙箱策略解析出的工作区根，cold Session 则读取持久化 header 旁投影缓存中记录的目录，再回退到 header 目录；它不会激活 Agent、读取事件正文或借用父 Session 的根。`workspaceFiles.scopeOf(sessionId, signal)` 把这一解析提供给打开同一种 `session/<id>/<path>` 地址的其他 Host 服务。live 读取不要求挂载 Session persistence；未挂载时 cold Session 无法解析，Gateway 返回 `gateway/lookup-not-found`。
+把本包与 `dsh-fs`、`dsh-sandbox-policy`、Session store 和 Typert Gateway 一起挂载；bundle 把它紧随 Session Controller 之后挂载。每个方法都在线路上携带 Session 身份，Client 调用 `remote.workspaceFiles.read(sessionId, path, range, signal)`、`stat(sessionId, path, signal)`、`readBytes(sessionId, path, options, signal)`、`list(sessionId, path, signal)`、`search(sessionId, request, signal)` 或 `changes(sessionId, path, signal)`，从不自己指定根。Host 对 live Session 使用沙箱策略解析出的工作区根，cold Session 则读取持久化 header 旁投影缓存中记录的目录，再回退到 header 目录；它不会激活 Agent、读取事件正文或借用父 Session 的根。`workspaceFiles.scopeOf(sessionId, signal)` 把这一解析提供给打开同一种 `session/<id>/<path>` 地址的其他 Host 服务。原生解析后，部署可用 `workspace-files/resolve-workspace-root` 选择该 Session 的文件系统根。live 读取不要求挂载 Session persistence；未挂载时 cold Session 无法解析，Gateway 返回 `gateway/lookup-not-found`。
 
 | 方法 | 返回 | 用途 |
 |---|---|---|
 | `stat(path)` | `WorkspaceFileStat { absolutePath, version, bytes? }` | 一个普通文件的身份、版本与大小，不含内容 |
 | `read(path, { offset?, limit? })` | `WorkspaceFileText` = stat + `{ offset, text, lines, eof }` | UTF-8 文本文件的一个行窗口；`lines` 计行数，使单个空行与越过文件末尾的页可区分 |
 | `readBytes(path, { range?, baseFile? })` | `WorkspaceFileBytes` = stat + `{ offset, data, eof }` | 以 `Uint8Array` 返回完整文件或有界字节范围；可从另一个文件所在目录解析目标 |
-| `list(path)` | `WorkspaceDirectoryListing { path, entries, truncated }` | 一个目录的直接子项 |
+| `list(path)` | `WorkspaceDirectoryListing { absolutePath, entries, truncated }` | 一个目录的直接子项 |
 | `search({ query, excludedPaths, includeHidden, respectGitignore })` | `WorkspaceFileSearchResult { matches, truncated, incomplete }` | 工作区任意位置中名称或相对路径包含查询的条目 |
 | `changes(path)` | `WorkspaceFileWatchFrame` 流 | 订阅就绪确认，随后为单个文件或目录直接子项的失效通知 |
 
 ### 寻址与路径
 
-`read`、`readBytes` 与 `stat` 接受绝对路径或相对于所选 Session 工作区根的路径。组合文件系统决定路径是否可读；本服务不额外要求文件读取限定于工作区。`readBytes` 携带 `options.baseFile` 时，从基准文件所在目录解析相对目标 `path`，基准文件或目标文件位于工作区外时同样适用。基准文件本身接受绝对路径或工作区相对路径。两个文件执行相同的普通文件检查；目标为空、绝对路径、URL 或含 NUL 时拒绝。文件结果报告文件系统执行环境中的绝对路径。`list` 仍限定于工作区，并以相对于该根的路径报告被列举目录。`changes` 使用相同的路径解析：文件监听沿用文件读取权限，目录监听仍限定于工作区。
+`read`、`readBytes` 与 `stat` 接受绝对路径或相对于所选 Session 工作区根的路径。组合文件系统决定路径是否可读；本服务不额外要求文件读取限定于工作区。`readBytes` 携带 `options.baseFile` 时，从基准文件所在目录解析相对目标 `path`，基准文件或目标文件位于工作区外时同样适用。基准文件本身接受绝对路径或工作区相对路径。两个文件执行相同的普通文件检查；目标为空、绝对路径、URL 或含 NUL 时拒绝。文件结果报告文件系统执行环境中的绝对路径。`list` 和 `changes` 使用相同的路径解析和文件系统读取权限。目录列表报告规范化的绝对目录路径。
 
 ### 分页
 
@@ -52,7 +52,7 @@ kind: "package-reference"
 
 ### 文件读取与目录检查
 
-每个带路径的操作都先通过 `lstat` 拒绝不存在的路径或错误的文件类型；读取文件的操作还拒绝末端符号链接，包括指回工作区内的链接。`list` 改为跟随末端链接——任何平台上的目录符号链接，包括 Windows 目录联接——要求它解析为工作区内的目录，因此被链接的目录与其目标一样可列举；`changes` 也以同样方式把被监听的目录限制在工作区内。文件操作随后通过组合文件系统解析和读取，不做额外的工作区包含检查。配置的分页、窗口、完整文件和目录列举上限仍然适用。文本页还拒绝无效 UTF-8 与 NUL 字节；字节读取不解码内容。读取或列举的空路径是 `gateway/bad-request`。
+每个带路径的操作都先通过 `lstat` 拒绝不存在的路径或错误的文件类型；读取文件的操作还拒绝末端符号链接，包括指回工作区内的链接。`list` 改为跟随末端链接——任何平台上的目录符号链接，包括 Windows 目录联接——要求它解析为目录。被链接的目录与其目标一样可列举。文件操作随后通过组合文件系统解析和读取，不做额外的工作区包含检查。配置的分页、窗口、完整文件和目录列举上限仍然适用。文本页还拒绝无效 UTF-8 与 NUL 字节；字节读取不解码内容。读取或列举的空路径是 `gateway/bad-request`。
 
 <a id="search"></a>
 ### 搜索
@@ -65,7 +65,7 @@ kind: "package-reference"
 
 ### 变更流
 
-`changes` 是 `stream` 模式的 Remote，只接受目标路径。Host 从 `stat` 取得实际目标类型；只要当前类型是目录，就要求位于工作区内，目标类型变化后也执行该检查。一代流先注册观察队列、解析目标并建立 `fs.watch`，然后产出 `{ kind: 'ready' }`。随后产出 `{ kind: 'change', change }`，其中 `change` 为当前 stat 元数据 `{ absolutePath, version }` 或 `{ absolutePath, absent: true }`。本地提供方使用 Chokidar，目录仅监听直接子项。匹配目标的 `fs/observed` 也触发失效。流在初始化期间排队变化。取消会独立于消费方拉取帧的进度关闭 watcher，流或插件拆除等待关闭完成。父目录保持存在时，缺失文件仍可监听同一路径的重建。
+`changes` 是 `stream` 模式的 Remote，只接受目标路径。Host 通过 Session 的文件系统提供方检查目标。一代流先注册观察队列、解析目标并建立 `fs.watch`，然后产出 `{ kind: 'ready' }`。随后产出 `{ kind: 'change', change }`，其中 `change` 为当前 stat 元数据 `{ absolutePath, version }` 或 `{ absolutePath, absent: true }`。本地提供方使用 Chokidar，目录仅监听直接子项。匹配目标的 `fs/observed` 也触发失效。流在初始化期间排队变化。取消会独立于消费方拉取帧的进度关闭 watcher，流或插件拆除等待关闭完成。父目录保持存在时，缺失文件仍可监听同一路径的重建。
 
 ### 配置
 
@@ -85,7 +85,7 @@ kind: "package-reference"
 
 ### 失败
 
-每种失败都是一个带类型化 details 的 `RemoteError` 代码，声明于 [`src/types.ts`](src/types.ts)：`workspace-file/not-found`、`workspace-file/outside-workspace`（目录列举或监听）、`workspace-file/watch-unsupported`（监听初始化失败）、`workspace-file/too-large`（带 `limit`，即适用的页、窗口或完整文件上限）、`workspace-file/not-text`、`workspace-file/not-regular-file`（`kind` 为 `directory`、`symlink` 或 `other`）以及 `workspace-file/not-directory`（`kind` 为 `file`、`symlink` 或 `other`）。调用方按代码分支，绝不按消息文本。
+每种失败都是一个带类型化 details 的 `RemoteError` 代码，声明于 [`src/types.ts`](src/types.ts)：`workspace-file/not-found`、`workspace-file/watch-unsupported`（监听初始化失败）、`workspace-file/too-large`（带 `limit`，即适用的页、窗口或完整文件上限）、`workspace-file/not-text`、`workspace-file/not-regular-file`（`kind` 为 `directory`、`symlink` 或 `other`）以及 `workspace-file/not-directory`（`kind` 为 `file`、`symlink` 或 `other`）。调用方按代码分支，绝不按消息文本。
 
 ### Client 文件资源
 
@@ -107,7 +107,7 @@ kind: "package-reference"
 
 ### 设计概念
 
-经 `ctx.fs` 的读取使用后端的读取权限；沙箱后端限制写与编辑，而不限制读取。Typert lookup 从 live Session 的沙箱工作区根，或 stored Session 在持久层 header-only `stat` 旁缓存的目录导出 `WorkspaceFileScope`，所以 cold subagent Session 不需要激活 Agent 或读取事件正文。本服务增加普通文件检查与有界传输，工作区包含要求只属于目录列举与目录监听。页从 `streamText` 切出，后者逐块解码并拒绝非 UTF-8：切页器对窗口之前的行只计数不保留，对窗口内的每个片段先按字节上限验收再缓冲，并在窗口之后的第一个字符处返回。流之前的一次 `stat` 给出页所报告的版本与大小。
+经 `ctx.fs` 的读取使用后端的读取权限；沙箱后端限制写与编辑，而不限制读取。Typert lookup 从 live Session 的沙箱工作区根，或 stored Session 在持久层 header-only `stat` 旁缓存的目录导出 `WorkspaceFileScope`，所以 cold subagent Session 不需要激活 Agent 或读取事件正文。本服务增加普通文件检查与有界传输，搜索要求目标位于工作区内。页从 `streamText` 切出，后者逐块解码并拒绝非 UTF-8：切页器对窗口之前的行只计数不保留，对窗口内的每个片段先按字节上限验收再缓冲，并在窗口之后的第一个字符处返回。流之前的一次 `stat` 给出页所报告的版本与大小。
 
 完整文件读取将大小上限检查交给 `fs.readBytes`，并通过二进制 Remote 返回原始字节。
 
@@ -155,7 +155,7 @@ Typert 生成 `./typert` 与 `./remote` 暴露的 Host 与 Client Remote 产物�
 
 - **提供方监听支持**——包括 SSH 在内的不支持后端报告 `watch-unsupported`；普通读取与手动刷新仍可用，不轮询外部变化。
 - **Linux 父目录重建**——父目录删除并重建后的自动监听恢复仍延期，见 [fs-local](../../fs/fs-local/README.zh.md)。
-- **仅目录受限**——目录列举与监听限定在 Session 工作区内；文件读取与监听沿用文件系统后端的读取权限。
+- **搜索范围**——按名称和路径搜索限定在 Session 工作区内。目录列举与监听沿用文件系统后端的读取权限。
 - **没有总行数**——页只报告 `eof`，不报告后面还有多少行；需要总数的消费方要翻到末尾或按 `bytes` 估算。
 - **超长单行没有页**——超过 `maxBytes` 的单行在包含它的每个窗口都以 `too-large` 失败，因为页按行而非按字节切。
 - **读取不具备事务性**——结果元数据来自内容读取之前的 stat；并发写入可能使报告版本与返回内容不一致。

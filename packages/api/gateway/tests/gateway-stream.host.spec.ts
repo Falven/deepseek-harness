@@ -1423,6 +1423,41 @@ describe('Typert Remote streams', () => {
     await unregister()
   })
 
+  it('admits a winning Client result before resuming the Host waterfall', async () => {
+    const { ctx } = await setup(true)
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const admitted = vi.fn(async (result: { readonly eventId: string; readonly event: string; readonly value: unknown }) => {
+      entered.resolve(undefined)
+      await release.promise
+      return result
+    })
+    ctx.on('typert-gateway/remote-event-result', async (result) => { await admitted(result) })
+    const client = await openEventClient(ctx, 'events-admitted')
+    const pending = pendingInvocation(ctx.extend())
+    source.push(pending.dispatch)
+    await vi.waitFor(() => { expect(deliveredInvocation(client)).toBeDefined() })
+    const frame = deliveredInvocation(client)!
+    const reply = sendEventResult(client, frame, { kind: 'result', value: 'allowed' })
+    try {
+      await entered.promise
+      expect(pending.resolve).not.toHaveBeenCalled()
+      expect(admitted).toHaveBeenCalledWith(expect.objectContaining({
+        eventId: frame.eventId,
+        event: 'fixture/approval',
+        value: 'allowed',
+      }))
+    } finally {
+      release.resolve(undefined)
+      await reply
+    }
+    await expect(pending.outcome).resolves.toEqual({ kind: 'result', value: 'allowed' })
+    client.socket.close()
+    await unregister()
+  })
+
   it('rejects the Host waterfall with the first Client listener rejection', async () => {
     const { ctx } = await setup(true)
     const source = new RemoteEventSourceProbe()

@@ -45,7 +45,9 @@ it('acknowledges the real synchronous inbox splice after flush without claiming 
         expect(resolve).toHaveBeenCalledWith(agent.session.id)
         const inserted = eventsAtFlush.flatMap(event => event.type === 'agent/inbox/spliced' ? event.data.inserted : [])
         expect(inserted).toHaveLength(1)
-        expect(inserted[0]?.source).toEqual({ kind: 'schedule' })
+        expect(inserted[0]?.source).toEqual({ kind: 'schedule', scheduleDelivery: [{
+          id: record.id, target: record.scheduledAt, scheduledAt: record.scheduledAt, prompt: record.prompt,
+        }] })
         expect(agent.inbox.nextTurn).toEqual(inserted)
         expect(commit).not.toHaveBeenCalled()
         expect(tasks).toEqual([seeded])
@@ -65,6 +67,26 @@ it('acknowledges the real synchronous inbox splice after flush without claiming 
         }])
         expect(agent.inbox.nextTurn).toEqual(inserted)
         expect(agent.session.snapshotEvents().some(event => event.type === 'assistant/message')).toBe(false)
+        tasks[0] = seeded
+        let owned = false
+        ctx.on('schedule/dispatch', (_request, next) => owned ? next() : Promise.reject(new Error('delivery paused')))
+        const recovered = new ScheduleRuntime(ctx, () => tasks, work => work(), commit, () => {}, {
+          retention: { days: 30, records: 200 }, newSessionIntervalMs: 3_600_000,
+        }, async sessionId => (await resolve(sessionId)).agent)
+        try {
+          recovered.requestDrive()
+          await vi.advanceTimersByTimeAsync(0)
+          expect(tasks[0]?.status).toBe('active')
+          expect(resolve).toHaveBeenCalledTimes(1)
+          owned = true
+          recovered.requestDrive()
+          await vi.advanceTimersByTimeAsync(0)
+          expect(agent.inbox.nextTurn).toEqual(inserted)
+          expect(tasks[0]?.status).toBe('ended')
+          expect(tasks[0]?.lastDelivery?.messageId).toBe(inserted[0]!.id)
+        } finally {
+          await recovered.dispose()
+        }
       } finally {
         releaseFlush.resolve(undefined)
         await runtime.dispose()

@@ -236,6 +236,8 @@ export interface SkillCatalogSnapshot {
   readonly skills: SkillSummary[]
   /** Whether every registered provider completed without a concurrent catalog revision. */
   readonly complete: boolean
+  /** First provider failure when discovery is incomplete. */
+  readonly reason?: string
 }
 
 /** Provider candidates plus whether the current discovery is authoritative. */
@@ -244,6 +246,8 @@ export interface SkillProviderObservation {
   readonly candidates: readonly SkillCandidate[]
   /** Whether discovery completed and these candidates may be cached. */
   readonly complete: boolean
+  /** Optional diagnostic describing the incomplete observation. */
+  readonly reason?: string
 }
 
 /** Provider interface for one source of skills, such as local directories or a remote registry. */
@@ -279,7 +283,7 @@ export interface SkillProviderControl {
 
 /** Skill registry configuration. */
 export interface Config {
-  /** Maximum number of completed cwd/provider catalogs kept in memory. */
+  /** Maximum number of completed cwd/provider catalogs kept in memory; zero disables completed-catalog caching. */
   readonly collectCacheMaxEntries?: number
 }
 
@@ -319,11 +323,13 @@ interface RegisteredProvider {
 interface LayerCollectResult {
   entries: IndexedCandidate[]
   cacheable: boolean
+  reason?: string
 }
 
 interface CollectResult {
   entries: Map<string, IndexedCandidate>
   cacheable: boolean
+  reason?: string
 }
 
 /** One scope's complete skill-registry contribution. */
@@ -376,7 +382,7 @@ export class SkillRegistry extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'skills')
     this.collectCacheMaxEntries = config.collectCacheMaxEntries ?? DEFAULT_COLLECT_CACHE_ENTRIES
-    assertPositiveInteger('collectCacheMaxEntries', this.collectCacheMaxEntries)
+    assertMinimumInteger('collectCacheMaxEntries', this.collectCacheMaxEntries, 0)
   }
 
   /**
@@ -488,6 +494,7 @@ export class SkillRegistry extends Service {
         .map(entry => toSummary(entry.candidate))
         .sort(compareSkillSummary),
       complete: collected.cacheable,
+      ...collected.reason === undefined ? {} : { reason: collected.reason },
     }
   }
 
@@ -538,9 +545,9 @@ export class SkillRegistry extends Service {
           attempt += 1
           continue
         }
-        return { entries: result.entries, cacheable: false }
+        return { entries: result.entries, cacheable: false, ...result.reason === undefined ? {} : { reason: result.reason } }
       }
-      if (result.cacheable) {
+      if (result.cacheable && this.collectCacheMaxEntries > 0) {
         this.collectCache.set(key, result.entries)
         if (this.collectCache.size > this.collectCacheMaxEntries) {
           const oldest = this.collectCache.keys().next() as IteratorYieldResult<string>
@@ -559,12 +566,14 @@ export class SkillRegistry extends Service {
     const layers = [this.layers.global, ...this.layers.chainLayers(options.scope)]
     const merged = new Map<string, IndexedCandidate>()
     let cacheable = true
+    let reason: string | undefined
     for (const layer of layers) {
       const collected = await this.collectLayer(layer, options)
       if (!collected.cacheable) cacheable = false
+      reason ??= collected.reason
       for (const entry of collected.entries) merged.set(entry.candidate.name, entry)
     }
-    return { entries: merged, cacheable }
+    return { entries: merged, cacheable, ...reason === undefined ? {} : { reason } }
   }
 
   private async collectLayer(layer: SkillLayer, options: SkillLookupOptions): Promise<LayerCollectResult> {
@@ -581,13 +590,14 @@ export class SkillRegistry extends Service {
       seen.add(skill.name)
       result.push(entry)
     }
-    return { entries: result, cacheable: collected.cacheable }
+    return { entries: result, cacheable: collected.cacheable, ...collected.reason === undefined ? {} : { reason: collected.reason } }
   }
 
   private async listLayerCandidates(layer: SkillLayer, options: SkillLookupOptions): Promise<LayerCollectResult> {
     throwIfAborted(options.signal)
     const candidates: IndexedCandidate[] = []
     let cacheable = true
+    let reason: string | undefined
     let runtimeOrder = 0
     for (const skill of [...layer.runtime.values()].sort((a, b) => compareCodePoints(a.name, b.name))) {
       candidates.push({
@@ -607,18 +617,23 @@ export class SkillRegistry extends Service {
       } catch (error) {
         if (options.signal?.aborted === true) throw toError(options.signal.reason)
         cacheable = false
-        this.ctx.logger.warn(`skill provider "${provider.name}" skipped: ${errorMessage(error)}`)
+        const failure = `skill provider "${provider.name}" skipped: ${errorMessage(error)}`
+        reason ??= failure
+        this.ctx.logger.warn(failure)
       }
       if (output === undefined) continue
       const observation = normalizeProviderObservation(output, provider.name)
-      if (!observation.complete) cacheable = false
+      if (!observation.complete) {
+        cacheable = false
+        reason ??= observation.reason ?? `skill provider "${provider.name}" reported incomplete discovery`
+      }
       for (const candidate of observation.candidates) {
         validateCandidate(candidate, provider.name)
         candidates.push({ candidate, provider, providerOrder: order, localOrder, layer })
         localOrder += 1
       }
     }
-    return { entries: candidates, cacheable }
+    return { entries: candidates, cacheable, ...reason === undefined ? {} : { reason } }
   }
 
   private invalidateCache(): void {
@@ -670,7 +685,8 @@ function normalizeProviderObservation(output: unknown, providerName: string): Sk
     throw invalidProviderObservation(providerName)
   }
   const observation = output as Partial<SkillProviderObservation>
-  if (!Array.isArray(observation.candidates) || typeof observation.complete !== 'boolean') {
+  if (!Array.isArray(observation.candidates) || typeof observation.complete !== 'boolean'
+    || (observation.reason !== undefined && typeof observation.reason !== 'string')) {
     throw invalidProviderObservation(providerName)
   }
   return observation as SkillProviderObservation
@@ -813,7 +829,7 @@ function compareIndexedCandidates(left: IndexedCandidate, right: IndexedCandidat
     || left.localOrder - right.localOrder
 }
 
-function assertPositiveInteger(name: string, value: number, minimum = 1): void {
+function assertMinimumInteger(name: string, value: number, minimum: number): void {
   if (!Number.isInteger(value) || value < minimum) {
     throw new Error(`skill: ${name} must be an integer greater than or equal to ${minimum}`)
   }

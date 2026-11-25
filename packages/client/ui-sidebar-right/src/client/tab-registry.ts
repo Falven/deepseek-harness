@@ -1,3 +1,4 @@
+import type { TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
 /**
  * Stage one of tab-type registration: what a type IS.
  *
@@ -25,6 +26,8 @@
  * on every use, so a language change needs no re-registration.
  */
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ComponentType } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -80,6 +83,8 @@ export interface SidebarRightGuideEntry {
   readonly description?: () => string
   /** Optional glyph, drawn before the title; without one the guide draws its cube placeholder. */
   readonly icon?: ComponentType<IconProps>
+  /** Session-scoped visibility; changes notify the guide through the returned source. */
+  readonly visible?: (sessionId: SessionId) => ObservableSnapshot<boolean>
 }
 
 /** A guide entry as the registry lists it: with the kind of the type that contributed it, which is what picking it opens. */
@@ -106,6 +111,8 @@ export interface SidebarRightTabDefinition {
   readonly multiple?: boolean
   /** Lazily keep a visited body mounted through hiding, Session changes and docking; default false. */
   readonly keepMounted?: boolean
+  /** Dispose a removed body's connected resource before the native mount is released. */
+  readonly retire?: (sessionId: SessionId, tab: TabRecord) => Promise<void> | undefined
   /**
    * Resource-address globs this type recognizes; omit for a page type, which is
    * opened by kind and recognizes no address.

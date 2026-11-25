@@ -61,6 +61,13 @@ export interface ToolDefinition extends ToolSchema {
    */
   finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined
   /**
+   * Final private presentation metadata after policy and content finalization.
+   * @param exec - immutable execution identity and arguments.
+   * @param result - normalized outcome with any final content projection.
+   * @returns private metadata, or undefined to retain the presentation projection.
+   */
+  finalizeMeta?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): JsonValue | undefined
+  /**
    * Cooperative tool-call timeout budget in milliseconds. Omit for no deadline.
    * Enforced by `@deepseek-ai/dsh-tool-call-timeout-policy` (a `tools/execute` wrapper); it
    * is NEVER sent to the model — `schemas()` whitelists only name/description/

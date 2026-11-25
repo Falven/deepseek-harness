@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
+export { bridge } from './http-bridge.ts'
 import { assertTrustedAuthority } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { ConnectionAuthentication } from './authentication.ts'
@@ -96,6 +97,7 @@ export const Config: z<Omit<ConnectionConfig, 'recovery'> & { recovery?: Connect
   recovery: ConnectionRecoveryConfigSchema.default({}).volatile(),
   trustedHosts: z.array(String).default([]),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  authMode: z.union([z.const('launch-token'), z.const('external')]).default('launch-token'),
 })
 
 /**
@@ -112,14 +114,18 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  const externalAuth = config?.authMode === 'external'
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
   new ConnectionAuthentication(ctx)
   ctx.inject(['connection.authentication'], (connectionCtx) => {
-    const connection = new HostConnectionService(connectionCtx, trustedHosts)
+    const connection = new HostConnectionService(connectionCtx, trustedHosts, externalAuth)
     connectionCtx.inject(['webServer'], (webCtx) => {
+      if (externalAuth && !webCtx.webServer.requiresExternalAdmission) {
+        throw new Error('client-connection: external authentication requires WebServer admission')
+      }
       assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
       const fetchHandler = connection.createSharedFetchHandler(API_PATH)
       const route: WebRoute = {

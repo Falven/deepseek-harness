@@ -185,6 +185,12 @@ v2 写入后，v1 程序会拒绝该存储。无效或有歧义的回执会被�
 -----
 
 <a id="further-exploration"></a>
+### 宿主准入与投递
+
+宿主可以注册 `schedule/task-source`，在每次持久任务编辑时记录经过验证的来源。`schedule/delivery-source` 在激活目标之前验证此来源。对于已有的目标 Session，`schedule/dispatch` 控制恢复和入队。只有目标和保存的来源键一致，周期提醒才会共享一条消息。如果定时提醒已进入收件箱但任务写入失败，运行时会在后续调度中使用同一消息标识完成回执。
+
+宿主可通过 `pauseSession(sessionId)` 暂停即将退役的目标的活动提醒。显式恢复后，暂停的提醒重新进入原生调度。
+
 ## 进一步探索
 
 - [Schedule 子系统](../../../docs/subsystems/schedule.zh.md)——时间、管理、存储与投递契约。

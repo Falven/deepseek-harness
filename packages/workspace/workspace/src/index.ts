@@ -118,6 +118,13 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     /**
+     * Supply the initial display title for a Workspace directory.
+     * Explicit and saved titles take precedence over this default.
+     * @param path - the directory being registered.
+     * @mode bail
+     */
+    'workspace/default-title'(path: string): string | undefined
+    /**
      * Ask the composed providers what still runs for a session before it is
      * archived. A listener prepends its own {@link SessionActivity} entries to
      * the result of `next()`; the registry's innermost callback returns an
@@ -274,9 +281,9 @@ export class WorkspaceRegistry extends Service {
    * that registration permanently disables automatic creation.
    * @param resolveDirectory - resolve the absolute directory; called only for
    * eligible creation, inside the registry mutation queue. Missing directories
-   * are created recursively before registration, and the initial title is the
-   * requested directory's own final segment — not the canonical one, so a
-   * symlink at that path does not retitle the Workspace after its target.
+   * are created recursively before registration. The default-title provider
+   * can override the requested directory's own final segment — not the
+   * canonical one, so a symlink does not retitle the Workspace after its target.
    * After resolution, caller cancellation does not roll back creation or registration.
    * @returns the initialized Workspace, or undefined when automatic creation is ineligible.
    */
@@ -295,7 +302,7 @@ export class WorkspaceRegistry extends Service {
       const canonical = await realpathNormalize(path)
       // A Session can start outside the registry queue while directory preparation awaits I/O.
       if ((await this.listStoredHeaders()).length > 0 || sessions.list().length > 0) return undefined
-      return this.createCanonical(canonical, defaultWorkspaceTitle(path), true)
+      return this.createCanonical(canonical, this.ctx.bail('workspace/default-title', path) ?? defaultWorkspaceTitle(path), true)
     })
   }
 
@@ -543,7 +550,7 @@ export class WorkspaceRegistry extends Service {
       if (entity.path === canonical) return entity
     }
 
-    const workspaceName = title ?? defaultWorkspaceTitle(canonical)
+    const workspaceName = title ?? this.ctx.bail('workspace/default-title', canonical) ?? defaultWorkspaceTitle(canonical)
     const table = this.requireTable()
     const state = this.requireState()
     const id = brandString<WorkspaceId>(randomUUID())
@@ -714,7 +721,7 @@ export class WorkspaceRegistry extends Service {
         const createdAt = new Date(group.newestAt).toISOString()
         const record: WorkspaceRecord = {
           path: group.path,
-          title: defaultWorkspaceTitle(group.path),
+          title: this.ctx.bail('workspace/default-title', group.path) ?? defaultWorkspaceTitle(group.path),
           sessionIds,
           createdAt,
           updatedAt: createdAt,

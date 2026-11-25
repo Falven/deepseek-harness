@@ -93,6 +93,7 @@ async function loadComposition(
   gzip = false,
   host = '127.0.0.1',
   tls?: Partial<TlsConfig> | null,
+  externalAdmission = false,
 ): Promise<Context> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-webserver-loader-'))
   const configPath = join(root, 'cordis.yml')
@@ -101,6 +102,7 @@ async function loadComposition(
     '  config:',
     `    host: '${host}'`,
     `    port: ${String(port)}`,
+    ...(externalAdmission ? ['    externalAdmission: true'] : []),
     ...(tls === undefined
       ? []
       : tls === null
@@ -198,6 +200,24 @@ async function upgrade(listenerPort: number | undefined, path: string): Promise<
   ].join('\r\n'))
   const [data] = await response as [Buffer]
   expect(String(data)).toContain('101 Switching Protocols')
+  return socket
+}
+
+/** Send an upgrade without requiring its acceptance. */
+async function attemptUpgrade(listenerPort: number | undefined, path: string, authorization?: string): Promise<ReturnType<typeof connect>> {
+  const port = boundPort(listenerPort)
+  const socket = connect(port, '127.0.0.1')
+  socket.on('error', () => {})
+  await once(socket, 'connect')
+  socket.write([
+    `GET ${path} HTTP/1.1`,
+    `Host: 127.0.0.1:${String(port)}`,
+    'Connection: Upgrade',
+    'Upgrade: dsh-test',
+    ...(authorization === undefined ? [] : [`Authorization: ${authorization}`]),
+    '',
+    '',
+  ].join('\r\n'))
   return socket
 }
 
@@ -521,6 +541,47 @@ describe('real Loader composition', () => {
     expect(reached).toBe(false)
   })
 
+  it('gates HTTP and upgrades before routing when external admission is required', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition(0, false, '127.0.0.1', undefined, true)
+    const server = loaded.webServer
+    expect(server.requiresExternalAdmission).toBe(true)
+    server.register({ kind: 'exact', path: '/private', auth: 'anonymous', handler: (_req, res) => { res.end('secret') } })
+    const upgraded = vi.fn((_req: unknown, socket: Duplex) => {
+      socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: dsh-test\r\n\r\n')
+    })
+    server.registerUpgrade({ kind: 'prefix', path: '/private-stream', auth: 'anonymous', handler: upgraded })
+    expect((await request(server.port, '/private')).status).toBe(503)
+    expect((await request(server.port, '/unmatched')).status).toBe(503)
+    const absent = await attemptUpgrade(server.port, '/private-stream/child')
+    await once(absent, 'close')
+    expect(upgraded).not.toHaveBeenCalled()
+
+    const remove = server.registerAdmission({
+      async http(req, res, next) {
+        if (req.headers.authorization !== 'Bearer allowed') { res.writeHead(401); res.end(); return }
+        await next()
+      },
+      async upgrade(req, socket, next) {
+        if (req.headers.authorization !== 'Bearer allowed') { socket.destroy(); return }
+        await next()
+      },
+    })
+    expect((await request(server.port, '/private')).status).toBe(401)
+    expect((await request(server.port, '/private', { headers: { authorization: 'Bearer allowed' } })).body).toBe('secret')
+    const denied = await attemptUpgrade(server.port, '/private-stream/child')
+    await once(denied, 'close')
+    expect(upgraded).not.toHaveBeenCalled()
+    const admitted = await attemptUpgrade(server.port, '/private-stream/child', 'Bearer allowed')
+    const [response] = await once(admitted, 'data') as [Buffer]
+    expect(String(response)).toContain('101 Switching Protocols')
+    admitted.destroy()
+    expect(upgraded).toHaveBeenCalledTimes(1)
+    expect(() => server.registerAdmission({ http: async () => {}, upgrade: async () => {} }))
+      .toThrow(/already registered/)
+    remove()
+    expect((await request(server.port, '/private')).status).toBe(503)
+  })
+
   it('accepts one concrete IP literal, keeping an IPv6 zone for listen', () => {
     for (const host of ['127.0.0.1', '10.1.2.3', '0.1.2.3', '::1', 'fd00::1', '::ffff:10.1.2.3', '::ffff:0.1.2.3', '0:0:0:0:0:0:0:1', 'fe80::1%lo', '::0.0.0.1', '::0.0.0.1%lo', '::127.0.0.1']) {
       expect(HttpServer.Config({ host, port: 0 }).host).toBe(host)
@@ -612,6 +673,7 @@ describe('real Loader composition', () => {
       compression: 'none',
       compressionLevel: 1,
       compressionThresholdBytes: 1024,
+      externalAdmission: false,
     })
     expect(() => HttpServer.Config({
       host: '127.0.0.1', port: 0, compressionLevel: 10,
@@ -1165,6 +1227,7 @@ describe('real Loader composition', () => {
       compression: 'none',
       compressionLevel: 1,
       compressionThresholdBytes: 1024,
+      externalAdmission: false,
     })
 
     const loaded = await loadComposition(0, false, '127.0.0.1', tls)

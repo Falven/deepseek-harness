@@ -18,22 +18,26 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { resolveReconnectPolicy, startConnection } from './connection.ts'
-import type { ReconnectConfig } from './connection.ts'
+import { resolveReconnectPolicy, startConnection as superviseConnection } from './connection.ts'
+import type { ConnectionHandle, ConnectionOptions, ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
 import { hasOAuthWithAuthorizationHeader, StdioSchema, StreamableHttpSchema } from './config.ts'
 import type { ConfigInput } from './config.ts'
 import { registerServerContext } from './server-context.ts'
-import { registerStatusCell } from './status.ts'
+import { McpStatusCell, registerStatusCell } from './status.ts'
 import { McpOAuthCredentials } from './oauth-credentials.ts'
 import type { McpOAuthConfig } from './oauth-options.ts'
 // Side-effect type import: declaration-merges `ctx.tools` onto Context.
 import type {} from '@deepseek-ai/dsh-tools'
 
-export { createMcpToolDefinition } from './tools.ts'
+export { createMcpToolDefinition, publicToolName } from './tools.ts'
+export { resolveReconnectPolicy } from './connection.ts'
+export { registerServerContext } from './server-context.ts'
+export { createTransport } from './transport.ts'
 export { McpLocalError, McpToolError } from './diagnostic.ts'
 export type { McpLocalErrorCode, McpToolErrorCode } from './diagnostic.ts'
 export type { McpResult, McpToolDefinitionOptions } from './tools.ts'
-export type { ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
+export type { ConnectionHandle, ConnectionOptions, ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
+export type { ServerContext } from './server-context.ts'
 export type { ConfigInput } from './config.ts'
 export { McpClientHost } from './host.ts'
 export type { McpServerInstance } from './host.ts'
@@ -138,6 +142,26 @@ export type Config = StdioConfig | StreamableHttpConfig
 /** Validate one server's configuration and resolve its defaults. */
 export const Config = z.union([StdioSchema, StreamableHttpSchema]) as z<ConfigInput, Config>
 
+/**
+ * Start a connection owned by a Host adapter that registers its own ServerContext and disposal.
+ * @param ctx - context owning the tool registrations.
+ * @param config - resolved server configuration.
+ * @param policy - validated reconnect policy.
+ * @param options - optional transport, tool and invocation adapters.
+ * @returns the supervised connection; its caller must dispose it before replacing it.
+ */
+export function startConnection(
+  ctx: Context, config: Config, policy: ResolvedReconnectPolicy, options: ConnectionOptions = {},
+): ConnectionHandle {
+  if (config.transport === 'streamable-http' && config.oauth !== undefined && options.createTransport !== undefined) {
+    throw new Error('MCP OAuth requires the native Streamable HTTP transport')
+  }
+  const status = new McpStatusCell((message, error) => ctx.logger.warn(message, error))
+  const oauth = config.transport === 'streamable-http' && config.oauth !== undefined
+    ? new McpOAuthCredentials(ctx, config.oauth) : undefined
+  return superviseConnection(ctx, config, policy, status, oauth, options)
+}
+
 // ---- Plugin apply ----
 
 /**
@@ -192,7 +216,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (!status.closure().closeConfirmed || status.closure().cleanupError !== undefined) {
     throw new Error(`mcp-client(${config.serverName}): previous connection cleanup is incomplete; restart the Host`)
   }
-  const connection = startConnection(ctx, config, reconnect, status, oauth)
+  const connection = superviseConnection(ctx, config, reconnect, status, oauth)
   let stopping: Promise<void> | undefined
   const dispose = (): Promise<void> => stopping ??= connection.dispose()
   // Cordis announces unload before awaiting an unfinished apply(). Closing

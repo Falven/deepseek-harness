@@ -101,3 +101,22 @@ describe('MCP result callback adaptation', () => {
     }
   })
 })
+
+it.each([false, true])('retains complete protocol evidence and App delivery for isError=%s', async (isError) => {
+  const ctx = new Context()
+  try {
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
+    const protocol = { content: [{ type: 'text', text: 'exact output' }], structuredContent: { value: 1 }, _meta: { private: 'App data' }, isError }
+    ctx.tools.register(createMcpToolDefinition(ctx, { name: 'app', rawName: 'app', description: '', inputSchema: { type: 'object' }, retainProtocolResult: true, call: async () => protocol }))
+    const result = await executeToolFixture(ctx, { name: 'app', callId: brandString<ToolCallId>('app'), arguments: {}, signal: new AbortController().signal })
+    expect(result.isError).toBe(isError)
+    expect(result.meta).toEqual({ mcpResult: protocol })
+    ctx.on('tools/post-execute', async (_exec, _result, next) => { await next(); return { kind: 'block', feedback: [{ type: 'text', text: 'blocked' }] } })
+    const blocked = await executeToolFixture(ctx, { name: 'app', callId: brandString<ToolCallId>('blocked'), arguments: {}, signal: new AbortController().signal })
+    expect(blocked.isError).toBe(true)
+    expect(blocked.meta).toBeUndefined()
+  } finally { await ctx.fiber.dispose() }
+})

@@ -301,7 +301,7 @@ export class OfficeKit extends TypertRemoteService {
         key: brandString<OfficeSourceKey>(JSON.stringify([scope.sessionId, scope.workspaceRoot, source.absolutePath])),
         version: source.version, ...(source.bytes === undefined ? {} : { bytes: source.bytes }),
         read: async (upstream, maxBytes) => {
-          const target = await fs.resolve(source.absolutePath, { signal: upstream })
+          const target = await fs.resolve(source.absolutePath, { cwd: scope.workspaceRoot, signal: upstream })
           const info = await fs.stat(target, upstream)
           if (info === undefined || info.type !== 'file') throw new OfficeKitError('source-changed', 'The source changed.')
           assertUnchanged({ absolutePath: fs.processPath(target), version: info.version })

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import type { AttachmentId } from '@deepseek-ai/dsh-attachment/types'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { makeTranslate, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type { MessageImagesOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -44,13 +44,13 @@ async function renderImages(blocks: AssistantMarkdownProps['blocks'], calls: Mes
     )
   }))
   await runtime.sessions.add({ id: 'image-labels' })
-  const session = runtime.sessions.retainFor(runtime.ctx, brandString<SessionId>('image-labels'))
+  const session = runtime.sessions.retainFor(runtime.ctx, SessionId('image-labels'))
   await runtime.root.declare({
     'conversation.chat.reasoning.body': { kind: 'single', scope: 'session' },
     'conversation.chat.message.images': { kind: 'single', scope: 'session' },
   }, ({ renderSlot, SessionProvider }) => (
     <SessionProvider session={session}>
-      <AssistantMarkdown loadImage={loadImage} renderSlot={renderSlot}
+      <AssistantMarkdown sessionId={SessionId('image-labels')} loadImage={loadImage} renderSlot={renderSlot}
         useDisclosure={useDisclosure} useGroupAction={useSearchableHidden}
         usePresentation={useDetailedPresentation} t={t} blocks={blocks} streaming={false} />
     </SessionProvider>
@@ -76,7 +76,7 @@ describe('assistant image slot handoff', () => {
     const firstRenderer = vi.fn((_key: string, _owner: object) => <span>first gallery</span>)
     const siblingRenderer = vi.fn((_key: string, _owner: object) => <span>sibling gallery</span>)
     const props = {
-      blocks: [{ kind: 'image', attachment }], streaming: false, t,
+      sessionId: SessionId('image-labels'), blocks: [{ kind: 'image', attachment }], streaming: false, t,
       useDisclosure, useGroupAction: useSearchableHidden,
       usePresentation: useDetailedPresentation,
     } satisfies Omit<AssistantMarkdownProps, 'loadImage' | 'renderSlot'>

@@ -19,6 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // (settings/credentials invalidations ride the allowlist) into this program.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { ModelsSection } from './ModelsSection.tsx'
+import { ApiKeyField } from './ApiKeyField.tsx'
 import type { ModelsSectionInjected } from './ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
 import type { DeepSeekOnboardingInjected } from './DeepSeekOnboardingDialog.tsx'
@@ -33,7 +34,7 @@ import { WELCOME_NOTICE_SETTINGS_NAMESPACE } from '../onboarding-copy.ts'
 import type { ModelsConfig } from '../types.ts'
 
 export type { ModelsSectionInjected, ModelsSectionProps } from './ModelsSection.tsx'
-export type { ModelsFooterOwnerProps, ProviderCardExtrasOwnerProps } from './slot-contract.ts'
+export type { ModelsFooterOwnerProps, ProviderAuthenticationOwnerProps, ProviderCardExtrasOwnerProps } from './slot-contract.ts'
 export type { ModelsKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -83,6 +84,8 @@ export const inject = [
  */
 export function apply(ctx: ClientContext, config: SyncedConfig<ModelsConfig>): void {
   const nativeShell = 'dshDesktop' in globalThis
+  const onboarding = config.onboarding?.get() !== false
+  ctx.slots.registerFactory({ name: 'settings.models.api-key', scope: 'root' }, ApiKeyField)
   // Whether the official-DeepSeek step opens on its own; the native shell owns its own onboarding.
   const automatic: ObservableSnapshot<boolean> = {
     getSnapshot: () => !nativeShell && (config.credentialOnboarding.get() ?? ABSENT_CREDENTIAL_ONBOARDING),
@@ -147,17 +150,18 @@ export function apply(ctx: ClientContext, config: SyncedConfig<ModelsConfig>): v
     label: () => t('nav'),
     inject: injected,
     children: {
+      'settings.models.provider-authentication': { kind: 'keyed', scope: 'root' },
       'settings.models.provider-card': { kind: 'keyed', scope: 'root' },
       'settings.models.footer': { kind: 'list', scope: 'root' },
     },
   }, ModelsSection))
-  if (!nativeShell) ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+  if (onboarding && !nativeShell) ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
     name: 'settings.onboarding',
     id: 'welcome-notice',
     order: -100,
     inject: welcomeInjected,
   }, WelcomeNotice))
-  ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+  if (onboarding) ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
     name: 'settings.onboarding',
     id: 'deepseek-official',
     children: { 'settings.models.sign-in': { kind: 'single', scope: 'root' } },

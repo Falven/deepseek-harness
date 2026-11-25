@@ -4,8 +4,11 @@
  * @module dsh-agent-loop/agent
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 import type {
   Agent,
+  AgentSettingChange,
   AgentCancelCause,
   AgentEventDispatch,
   AgentOptions,
@@ -113,6 +116,8 @@ export class ReactLoopAgent implements Agent {
   readonly inbox: ReactLoopInbox
   private phase: Phase
   private activityDone: Promise<void> = Promise.resolve()
+  private readonly settingsChanges: Array<() => Promise<void>> = []
+  private settingsDrain: Promise<void> | undefined
 
   /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */
   readonly scope: Scope
@@ -170,7 +175,7 @@ export class ReactLoopAgent implements Agent {
     // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
     const wakingAfterAbort = wakeup && this.phase.kind !== 'idle' && this.phase.abort.signal.aborted
     const resolvedTarget = wakingAfterAbort ? 'next-turn' : target
-    this.inbox.splice(resolvedTarget, Infinity, 0, [message])
+    this.inbox.splice(resolvedTarget, Infinity, 0, [message], wakeup ? 'instruction' : 'context')
     if (wakeup) this.wakeDriver(wakingAfterAbort)
   }
 
@@ -184,6 +189,44 @@ export class ReactLoopAgent implements Agent {
 
   inject(input: UserMessage): void {
     this.send(input, 'next-step', false)
+  }
+
+  changeSettings(change: AgentSettingChange, apply: () => boolean, signal?: AbortSignal): Promise<boolean> {
+    if (this.loopCtx.agents.currentInitiator() === this) {
+      return Promise.reject(new Error('Settings controls cannot be awaited from an agent operation.'))
+    }
+    const requestedAt = this.session.seq - 1
+    const selection = { ...change }
+    const result = Promise.withResolvers<boolean>()
+    const aborted = (): void => { result.reject(signal?.reason) }
+    signal?.addEventListener('abort', aborted, { once: true })
+    this.settingsChanges.push(AsyncLocalStorage.bind(async () => {
+      try {
+        signal?.throwIfAborted()
+        this.lifetimeSignal.throwIfAborted()
+        if (this.phase.kind !== 'idle' && abortedCancelCause(this.phase.abort.signal)?.kind === 'disposed') {
+          throw new Error('The agent was disposed before the settings change.')
+        }
+        signal?.removeEventListener('abort', aborted)
+        result.resolve(await this.dispatch.waterfall('agent/control', { change: selection, requestedAt }, async () => apply()))
+      } catch (error) {
+        result.reject(error)
+      } finally {
+        signal?.removeEventListener('abort', aborted)
+      }
+    }))
+    if (this.phase.kind === 'idle') void this.drainSettings()
+    return result.promise
+  }
+
+  private drainSettings(): Promise<void> {
+    return this.settingsDrain ??= Promise.resolve().then(async () => {
+      try {
+        for (let change = this.settingsChanges.shift(); change !== undefined; change = this.settingsChanges.shift()) await change()
+      } finally {
+        this.settingsDrain = undefined
+      }
+    })
   }
 
   cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
@@ -211,8 +254,10 @@ export class ReactLoopAgent implements Agent {
     this.activityDone = done.promise
     return (async () => {
       try {
+        if (this.settingsDrain !== undefined || this.settingsChanges.length > 0) await this.drainSettings()
         return await job(maintenance.abort.signal)
       } finally {
+        if (this.settingsDrain !== undefined || this.settingsChanges.length > 0) await this.drainSettings()
         this.setPhase({ kind: 'idle', lastTurn: maintenance.lastTurn })
         const cause = abortedCancelCause(maintenance.abort.signal)
         if (cause?.kind !== 'disposed' && maintenance.wakeRequested && this.inbox.hasPending) this.wakeDriver()
@@ -257,7 +302,8 @@ export class ReactLoopAgent implements Agent {
     let activity: Promise<void>
     do {
       await (activity = this.activityDone)
-    } while (activity !== this.activityDone)
+      if (this.settingsDrain !== undefined) await this.settingsDrain
+    } while (activity !== this.activityDone || this.settingsDrain !== undefined)
   }
 
   /** Report one failure at its live boundary, then preserve it for driver containment. */
@@ -277,6 +323,7 @@ export class ReactLoopAgent implements Agent {
       /* v8 ignore next -- kick owns a running phase until this driver boundary */
       if (this.phase.kind === 'running') {
         const { turn, wakeRequested } = this.phase
+        if (this.settingsDrain !== undefined || this.settingsChanges.length > 0) await this.drainSettings()
         this.setPhase({ kind: 'idle', lastTurn: turn })
         if (wakeRequested && this.inbox.hasPending) this.wakeDriver()
       }
@@ -287,7 +334,13 @@ export class ReactLoopAgent implements Agent {
     /* v8 ignore next -- private callers establish the running phase before proposing a step */
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": pre-step outside running phase`)
     const signal = this.phase.abort.signal
-    const claimed = this.inbox.claim(target, position.turn)
+    if (this.settingsDrain !== undefined || this.settingsChanges.length > 0) await this.drainSettings()
+    signal.throwIfAborted()
+    const proposed = [...this.inbox.nextStep, ...(target === 'next-turn' ? this.inbox.nextTurn.slice(0, 1) : [])]
+    const preparation = this.dispatch.prepare('agent/prepare-step', { messages: proposed, ...position, signal })
+    if (preparation !== undefined) await preparation
+    signal.throwIfAborted()
+    const claimed = this.inbox.claim(target, position.turn, proposed)
     const selection = this.model.current()
     if (selection === undefined) {
       throw new Error(`agent "${this.id}" has no provider/model: set AgentOptions.provider and AgentOptions.model or record a model selection`)
@@ -328,6 +381,14 @@ export class ReactLoopAgent implements Agent {
     const { signal } = phase.abort
     signal.throwIfAborted()
     const turn = phase.turn + 1
+    try {
+      const preparation = this.dispatch.prepare('agent/before-turn', { turn, signal })
+      if (preparation !== undefined) await preparation
+    } catch (error: unknown) {
+      if (signal.aborted) throw error
+      this.throwError(error)
+    }
+    signal.throwIfAborted()
     try {
       this.session.append('turn/start', { turn })
     } catch (error: unknown) {
@@ -388,6 +449,7 @@ export class ReactLoopAgent implements Agent {
           decision.toolSet.dispose()
         }
         signal.throwIfAborted()
+        if (this.settingsDrain !== undefined || this.settingsChanges.length > 0) await this.drainSettings()
         if (turnEnds && this.inbox.nextStep.length === 0) {
           await this.dispatch.serial('agent/turn-stopping', { turn, signal })
           signal.throwIfAborted()

@@ -1334,6 +1334,44 @@ describe('the run_code dispatch bridge', () => {
     expect(result.meta).toBeUndefined()
   })
 
+  it('persists nested presentation metadata without adding it to program output', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    const { agent, events } = fakeAgent()
+    ctx.tools.register(defineTool({
+      name: 'app_result',
+      description: 'Return an interactive result.',
+      parameters: {},
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+        presentationMeta: (_args, value) => ({ mcpApp: {
+          input: { request: 'greet' },
+          result: {
+            structuredContent: { value },
+            _meta: { ui: { resourceUri: 'ui://hello' } },
+          },
+        } }),
+      },
+      execute: () => Promise.resolve('hello'),
+    }))
+    runtime.behavior = async request => printed(await request.bindings[0]!.functions.app_result!({}))
+
+    const result = await runCode(ctx, 'program', { agent })
+    expect(result.isError ? undefined : result.value).toEqual({ logs: ['hello'] })
+    expect(result.meta).toBeUndefined()
+    expect(events.find(event => event.type === 'tool/ptc-dispatch')?.data).toMatchObject({
+      name: 'app_result',
+      content: [{ type: 'text', text: 'hello' }],
+      meta: { mcpApp: {
+        input: { request: 'greet' },
+        result: {
+          structuredContent: { value: 'hello' },
+          _meta: { ui: { resourceUri: 'ui://hello' } },
+        },
+      } },
+    })
+  })
+
   it('exposes only an opaque parent token to nested result observers', async () => {
     const { ctx, runtime } = await setup({ mode: 'ptc' })
     registerEcho(ctx)
@@ -2575,6 +2613,7 @@ describe('the run_code dispatch bridge', () => {
       arguments: { value: 'x' },
       isError: false,
       content: [{ type: 'text', text: 'echo:x' }],
+      meta: { privatePresentation: true },
     })
     const derived = session.deriveMessages()
     expect(derived).toHaveLength(1)

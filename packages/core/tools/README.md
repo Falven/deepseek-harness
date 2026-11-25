@@ -91,7 +91,9 @@ Agent-step concurrency uses the [agent-loop configuration](../agent-loop/README.
 
 `ctx.tools.guard(guard)` registers a monotonic synchronous guard after the extensible `tools/pre-execute` waterfall: a returned reason denies the call, and no later listener can turn that denial back into permission. The pipeline's events give plugins more control — `tools/pre-execute` decides allow/deny/ask, `tools/execute` wraps dispatch for timeout or retry, `tools/post-execute` inspects or replaces the result, and `tools/result` observes the frozen final outcome.
 
-A tool’s `projectContent` installs execution-prepared content before post-execute policies. Policies may still replace or block it; `finalizeContent` remains the final content transform after those policies.
+A tool’s `projectContent` installs execution-prepared content before post-execute policies. Policies may still replace or block it; `finalizeContent` remains the final content transform after those policies. The optional `finalizeMeta` callback runs after policy and content finalization to retain private result metadata; it does not change the pure `output.presentationMeta` projection.
+
+`ctx.tools.startHostCall(session, input)` accepts an unregistered Host-owned Tool through the same policy pipeline. It flushes acceptance and dispatch intent before the body, returns an observer-independent completion, and deduplicates by call ID and complete invocation identity. Its events stay outside model history. A restored unresolved call reports an unknown outcome and is never executed by observation or retry.
 
 ### Host presentation descriptors
 

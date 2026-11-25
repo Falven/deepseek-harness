@@ -962,7 +962,7 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
           {error !== null && <div className={css.error} role="alert">{error}</div>}
         </div>
         <div className={css.footerBar}>
-          <Button
+          {(parent === null || parent.canCreate !== false) && <Button
             variant="outline"
             icon={<IconPlusOutlineRegular size={14} />}
             disabled={parent === null || loading || parentInert || draftPending}
@@ -972,7 +972,7 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
             }}
           >
             {t('browser.newFolder')}
-          </Button>
+          </Button>}
           <button
             type="button"
             className={clsx(css.showHiddenToggle, showHidden && css.showHiddenToggleActive)}

@@ -57,7 +57,10 @@ describe('ClientJobsModel rows', () => {
 describe('ClientJobsModel observation', () => {
   it('accumulates output, advances the resume cursor, and closes on settlement', () => {
     const model = new ClientJobsModel()
-    opened(model)
+    const job = view({ owner: S1, callId: 'call-1', cwd: '/workspace/tools' })
+    model.rowsReplaced(S1, [job])
+    model.observeOpened(ID, { type: 'opened', job, from: 0 })
+    model.rowsReplaced(S1, [])
     expect(model.cursorOf(ID)).toBe(0)
     model.observeOutput(ID, { type: 'output', chunks: [{ at: 0, text: 'a' }, { at: 1, text: 'b' }], next: 2 })
     model.observeOutput(ID, { type: 'output', chunks: [{ at: 2, text: 'c' }], next: 3 })
@@ -65,6 +68,7 @@ describe('ClientJobsModel observation', () => {
     const live = model.getSnapshot().observed[String(ID)]
     expect(live?.text).toBe('abc')
     expect(live?.streaming).toBe(true)
+    expect(live).toMatchObject({ owner: S1, callId: 'call-1', cwd: '/workspace/tools' })
     model.observeSettled(ID)
     expect(model.getSnapshot().observed[String(ID)]?.streaming).toBe(false)
   })

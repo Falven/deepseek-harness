@@ -326,6 +326,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         kind: 'pwsh',
         label: args.command,
         toolCall: { callId: exec.callId, rootCallId: exec.rootCallId },
+        cwd: spec.workdir,
         ...exec.agent ? { owner: exec.agent.id } : {},
         output: processSources(() => proc),
         run: () => {

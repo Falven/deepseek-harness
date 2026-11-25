@@ -1,12 +1,7 @@
 /** Host timer over standalone tasks; target Session activation is a delivery operation. */
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-declare module '@deepseek-ai/dsh-llm' {
-  interface MessageSourceMap {
-    'schedule': { kind: 'schedule' } & ContextFormed
-  }
-}
+import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SessionId as SessionIdType } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
@@ -16,6 +11,8 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-workspace'
+import type { ProjectionDefinition, ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
+import { z } from 'zod'
 import {
   isRecurringScheduleRecord, MIN_EVERY_INTERVAL_SECONDS, renderRecurringReminderBatchFraming, renderReminderFraming,
   resolveRecurringOccurrence, type RecurringOccurrence,
@@ -23,7 +20,10 @@ import {
 import { formatScheduleLocalTime } from './domain.ts'
 import { appendDelivery } from './delivery-history.ts'
 import type { ScheduleTask } from './storage.ts'
-import type { DeliveryRetentionBounds, ScheduleDeliveryReceipt, ScheduleId, ScheduleSessionCreateSpec } from './types.ts'
+import type {
+  DeliveryRetentionBounds, ScheduleDeliveredOccurrence, ScheduleDeliveryReceipt,
+  ScheduleId, ScheduleMessageSource, ScheduleSessionCreateSpec,
+} from './types.ts'
 
 /** Largest delay Node timers represent without clamping. */
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
@@ -64,6 +64,23 @@ function batchSessionOf(task: ScheduleTask): SessionIdType | undefined {
     : undefined
 }
 
+type DeliveryEvidence = ScheduleDeliveredOccurrence & { readonly messageId: ScheduleDeliveryReceipt['messageId'] }
+type DeliveryEvidenceByTask = Record<string, DeliveryEvidence>
+
+/** Latest enqueued occurrence per task, including reminders already consumed by a step. */
+const deliveryProjection: ProjectionDefinition<'scheduleDelivery', DeliveryEvidenceByTask> = {
+  key: 'scheduleDelivery', stateVersion: 1,
+  stateSchema: z.record(z.string(), z.custom<DeliveryEvidence>()),
+  init: () => ({}),
+  apply(state, event) {
+    if (event.type !== 'agent/inbox/spliced') return state
+    const entries = event.data.inserted.flatMap(message =>
+      ((message.source as ScheduleMessageSource).scheduleDelivery ?? [])
+        .map(delivery => [delivery.id, { ...delivery, messageId: message.id }] as const))
+    return entries.length === 0 ? state : { ...state, ...Object.fromEntries(entries) }
+  },
+}
+
 /** Owns at most one timer across recomputations; delivery and management share the serialized operation. */
 export class ScheduleRuntime {
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -71,6 +88,7 @@ export class ScheduleRuntime {
   private readonly executing = new Set<ScheduleId>()
   private stopping = false
   private requested = false
+  private readonly deliveryProjection: Promise<ProjectionHandle<DeliveryEvidenceByTask>>
 
   /**
    * @param ctx - Host services used to resume and enqueue.
@@ -89,7 +107,9 @@ export class ScheduleRuntime {
     private readonly changed: () => void,
     private readonly limits: ScheduleRuntimeLimits,
     private readonly resolveAgent: (sessionId: SessionIdType) => Promise<Agent>,
-  ) {}
+  ) {
+    this.deliveryProjection = ctx.sessionProjections.register(deliveryProjection)
+  }
 
   /**
    * Recompute the nearest obligation after startup or a durable change.
@@ -130,6 +150,7 @@ export class ScheduleRuntime {
     this.clearTimer()
     // requestDrive reports execution failures; teardown only waits for quiescence.
     await this.running?.catch(() => undefined)
+    await (await this.deliveryProjection).dispose()
   }
 
   /**
@@ -145,28 +166,33 @@ export class ScheduleRuntime {
       signal?.throwIfAborted()
       const task = this.tasks().find(candidate => candidate.record.id === id)
       if (task === undefined) return
-      if (this.executing.has(id)
-        || this.nextAdmissionAt(task) > Date.now()
-        || await this.recoverOutstandingExecution(task)) {
-        return { task, admitted: false }
-      }
-      const target = await this.resolveTarget(task)
-      if (this.stopping) throw new Error('Schedule runtime is stopping')
-      // Sample the occurrence after Session restoration, which can take longer than one recurrence interval.
-      const occurrenceAt = new Date(Date.now()).toISOString()
-      const held = task.target.kind !== 'new' ? [id] : []
-      const sent = await this.send(target.agent, renderReminderFraming({ ...task.record, scheduledAt: occurrenceAt }), held)
-      const committed = new Set<ScheduleId>()
-      try {
-        const delivered = this.delivered(task, {
-          scheduledAt: occurrenceAt, deliveredAt: sent.deliveredAt, messageId: sent.messageId, targetSessionId: target.sessionId,
-        })
-        await this.commit(delivered)
-        committed.add(id)
-        return { task: delivered, admitted: true }
-      } finally {
-        this.settle(held, committed, sent.execution)
-      }
+      return this.admitDelivery(task, async (source) => {
+        if (this.executing.has(id)
+          || this.nextAdmissionAt(task) > Date.now()
+          || await this.recoverOutstandingExecution(task)) {
+          return { task, admitted: false }
+        }
+        signal?.throwIfAborted()
+        const target = await this.resolveTarget(task)
+        if (this.stopping) throw new Error('Schedule runtime is stopping')
+        // Sample the occurrence after Session restoration, which can take longer than one recurrence interval.
+        const occurrenceAt = new Date(Date.now()).toISOString()
+        const held = task.target.kind !== 'new' ? [id] : []
+        const sent = await this.send(
+          target.agent, renderReminderFraming({ ...task.record, scheduledAt: occurrenceAt }), held, source,
+        )
+        const committed = new Set<ScheduleId>()
+        try {
+          const delivered = this.delivered(task, {
+            scheduledAt: occurrenceAt, deliveredAt: sent.deliveredAt, messageId: sent.messageId, targetSessionId: target.sessionId,
+          })
+          await this.commit(delivered)
+          committed.add(id)
+          return { task: delivered, admitted: true }
+        } finally {
+          this.settle(held, committed, sent.execution)
+        }
+      })
     }))
   }
 
@@ -206,7 +232,8 @@ export class ScheduleRuntime {
       if (this.stopping) return
       if (handled.has(task.record.id)) continue
       const session = batchSessionOf(task)
-      const group = session === undefined ? [task] : due.filter(candidate => batchSessionOf(candidate) === session)
+      const group = session === undefined ? [task] : due.filter(candidate =>
+        batchSessionOf(candidate) === session && candidate.deliverySourceKey === task.deliverySourceKey)
       for (const member of group) handled.add(member.record.id)
       for (const id of await this.deliverDue(group, session !== undefined)) failed.add(id)
     }
@@ -234,47 +261,80 @@ export class ScheduleRuntime {
   private async deliverDue(group: readonly ScheduleTask[], batch: boolean): Promise<readonly ScheduleId[]> {
     let admitted = group
     const committed = new Set<ScheduleId>()
+    const failed = new Set<ScheduleId>()
     try {
-      const candidates: ScheduleTask[] = []
-      for (const member of group) {
-        if (this.nextAdmissionAt(member) > Date.now() || await this.recoverOutstandingExecution(member)) continue
-        candidates.push(member)
-      }
-      // The check precedes target resolution, so a target made future by clock rollback creates no Session.
-      const checkedAt = Date.now()
-      admitted = candidates.filter(member => Date.parse(member.record.scheduledAt) <= checkedAt)
-      const first = admitted[0]
-      if (first === undefined) return []
-      const target = await this.resolveTarget(first)
-      if (this.stopping) return []
-      const now = Date.now()
-      // Session restoration can span a wall-clock rollback; future members keep their timer obligation.
-      admitted = admitted.filter(member => Date.parse(member.record.scheduledAt) <= now)
-      const deliveries = admitted.map(task => ({
-        task, occurrence: isRecurringScheduleRecord(task.record)
-          ? resolveRecurringOccurrence(task.record, now) : { occurrenceAt: task.record.scheduledAt },
-      }))
-      const single = deliveries[0]
-      if (single === undefined) return []
-      const text = batch
-        ? renderRecurringReminderBatchFraming(deliveries.map(({ task, occurrence }) => ({
-          record: task.record, occurrenceAt: occurrence.occurrenceAt,
-        })))
-        : renderReminderFraming({ ...single.task.record, scheduledAt: single.occurrence.occurrenceAt })
-      const held = deliveries.filter(({ task }) => task.target.kind !== 'new').map(({ task }) => task.record.id)
-      const sent = await this.send(target.agent, text, held)
-      try {
-        for (const { task, occurrence } of deliveries) {
-          await this.commit(this.advanced(task, occurrence, {
-            scheduledAt: occurrence.occurrenceAt, deliveredAt: sent.deliveredAt, messageId: sent.messageId,
-            targetSessionId: target.sessionId,
-          }))
-          committed.add(task.record.id)
+      const task = group[0]
+      if (task === undefined) return []
+      await this.admitDelivery(task, async (source) => {
+        const candidates: ScheduleTask[] = []
+        for (const member of group) {
+          if (this.nextAdmissionAt(member) > Date.now() || await this.recoverOutstandingExecution(member)) continue
+          candidates.push(member)
         }
-      } finally {
-        this.settle(held, committed, sent.execution)
-      }
-      return []
+        // The check precedes target resolution, so a target made future by clock rollback creates no Session.
+        const checkedAt = Date.now()
+        admitted = candidates.filter(member => Date.parse(member.record.scheduledAt) <= checkedAt)
+        const first = admitted[0]
+        if (first === undefined) return
+        const target = await this.resolveTarget(first)
+        if (this.stopping) return
+        const now = Date.now()
+        // Session restoration can span a wall-clock rollback; future members keep their timer obligation.
+        admitted = admitted.filter(member => Date.parse(member.record.scheduledAt) <= now)
+        const evidence = (await this.deliveryProjection).stateOf(target.agent.session)
+        for (const task of admitted) {
+          const prior = Object.hasOwn(evidence, task.record.id) ? evidence[task.record.id] : undefined
+          if (prior === undefined || prior.target !== task.record.scheduledAt
+            || prior.messageId === task.lastDelivery?.messageId) continue
+          try {
+            if (!await this.ctx.sessions.flush(target.agent.session)) {
+              throw new Error('Session persistence did not acknowledge the recovered reminder')
+            }
+            const recovered = this.advanced(
+              { ...task, record: { ...task.record, prompt: prior.prompt } },
+              { occurrenceAt: prior.scheduledAt,
+                ...(prior.nextScheduledAt === undefined ? {} : { nextScheduledAt: prior.nextScheduledAt }) },
+              { scheduledAt: prior.scheduledAt, deliveredAt: new Date().toISOString(),
+                messageId: prior.messageId, targetSessionId: target.sessionId },
+            )
+            await this.commit({ ...recovered, record: { ...recovered.record, prompt: task.record.prompt } })
+            committed.add(task.record.id)
+          } catch (error: unknown) {
+            failed.add(task.record.id)
+            this.ctx.logger.warn(`schedule: recovered reminder "${task.record.id}" was not acknowledged: ${String(error)}`)
+          }
+        }
+        const deliveries = admitted.filter(task => !committed.has(task.record.id) && !failed.has(task.record.id)).map(task => ({
+          task, occurrence: isRecurringScheduleRecord(task.record)
+            ? resolveRecurringOccurrence(task.record, now) : { occurrenceAt: task.record.scheduledAt },
+        }))
+        const single = deliveries[0]
+        if (single === undefined || this.stopping) return
+        const text = batch
+          ? renderRecurringReminderBatchFraming(deliveries.map(({ task, occurrence }) => ({
+            record: task.record, occurrenceAt: occurrence.occurrenceAt,
+          })))
+          : renderReminderFraming({ ...single.task.record, scheduledAt: single.occurrence.occurrenceAt })
+        const held = deliveries.filter(({ task }) => task.target.kind !== 'new').map(({ task }) => task.record.id)
+        const scheduleDelivery: ScheduleDeliveredOccurrence[] = deliveries.map(({ task, occurrence }) => ({
+          id: task.record.id, target: task.record.scheduledAt, scheduledAt: occurrence.occurrenceAt,
+          prompt: task.record.prompt,
+          ...(occurrence.nextScheduledAt === undefined ? {} : { nextScheduledAt: occurrence.nextScheduledAt }),
+        }))
+        const sent = await this.send(target.agent, text, held, { ...source, scheduleDelivery })
+        try {
+          for (const { task, occurrence } of deliveries) {
+            await this.commit(this.advanced(task, occurrence, {
+              scheduledAt: occurrence.occurrenceAt, deliveredAt: sent.deliveredAt, messageId: sent.messageId,
+              targetSessionId: target.sessionId,
+            }))
+            committed.add(task.record.id)
+          }
+        } finally {
+          this.settle(held, committed, sent.execution)
+        }
+      })
+      return [...failed]
     } catch (error: unknown) {
       // Successful commits and targets made future by clock rollback keep their timer obligation.
       const pending = admitted.filter(member => !committed.has(member.record.id))
@@ -283,6 +343,20 @@ export class ScheduleRuntime {
       this.ctx.logger.warn(`schedule: reminders ${JSON.stringify(ids)} were not acknowledged: ${String(error)}`)
       return pending.filter(member => Date.parse(member.record.scheduledAt) <= failedAt).map(member => member.record.id)
     }
+  }
+
+  /** Resolve saved attribution before activating a target or enqueuing a reminder. */
+  private async admitDelivery<T>(task: ScheduleTask, deliver: (source: MessageSource) => Promise<T>): Promise<T> {
+    const source = await this.ctx.waterfall('schedule/delivery-source', {},
+      () => Promise.resolve(task.deliverySource ?? { kind: 'schedule' }))
+    const { target } = task
+    if (target.kind !== 'session') return deliver(source)
+    let accepted: { value: T } | undefined
+    await this.ctx.waterfall('schedule/dispatch', { sessionId: target.sessionId }, async () => {
+      accepted = { value: await deliver(source) }
+    })
+    if (accepted === undefined) throw new Error('Schedule delivery was not admitted')
+    return accepted.value
   }
 
   /** Earliest wall-clock instant at which this task may admit another delivery. */
@@ -350,8 +424,10 @@ export class ScheduleRuntime {
    * Enqueue one reminder and wait for Session persistence to acknowledge it.
    * The held tasks hold their slots from the enqueue; a failure releases them.
    */
-  private async send(agent: Agent, text: string, held: readonly ScheduleId[]): Promise<SentReminder> {
-    const message = createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'schedule' } })
+  private async send(
+    agent: Agent, text: string, held: readonly ScheduleId[], source: ScheduleMessageSource,
+  ): Promise<SentReminder> {
+    const message = createUserMessage({ content: [{ type: 'text', text }], source })
     for (const id of held) this.executing.add(id)
     try {
       agent.followup(message)

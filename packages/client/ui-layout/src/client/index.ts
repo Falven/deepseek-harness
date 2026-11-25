@@ -87,6 +87,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * occupant decides when to render its Session-bound content.
      */
     'rightbar': { kind: 'single'; scope: 'root'; owner: RightbarOwnerProps }
+    /** Optional full-width header above the columns. */
+    'shell.header': { kind: 'single'; scope: 'root' }
     /**
      * Full-width bottom content below all three columns. Its rendered height
      * reduces the columns' available height; empty content reserves no space.
@@ -196,6 +198,7 @@ export function apply(ctx: ClientContext): void {
         'sidebar': { kind: 'single', scope: 'root' },
         'main': { kind: 'keyed', scope: 'root' },
         'rightbar': { kind: 'single', scope: 'root' },
+        'shell.header': { kind: 'single', scope: 'root' },
         'shell.bottom': { kind: 'single', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
         'shell.leading': { kind: 'single', scope: 'root' },

@@ -25,6 +25,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CredentialInfo, LlmNativeAuth, SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ProviderAuthenticationOwnerProps } from './slot-contract.ts'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   DeepSeekModelsEditor, modelDrafts, validateDeepSeekModels,
@@ -72,6 +74,10 @@ export interface ProviderEditorProps {
   schema: SettingsSchemaOperations
   /** Path from the section root to this provider's profile. */
   settingsPath: readonly string[]
+  /** Reuse a native editor for a compatible profile in a different namespace. */
+  editor?: 'pi-ai'
+  /** Dispatch an adapter-owned authentication control with the native input as fallback. */
+  renderAuthentication?: PropsRenderSlots<'settings.models.provider-authentication'>['renderSlot']
   /** The Host operations this card writes and interrogates through. */
   operations: ModelsOperations
   /** Endpoint the route uses when its profile sets no `baseURL`; absent when the adapter reports none. */
@@ -220,15 +226,15 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const node = useMemo(() => schema.nodeAtPath(root, settingsPath), [root, schema, settingsPath])
   const fallback = schema.getPath(namespace.value, settingsPath)
   const disabled = props.readOnly || busy
-  const layout = layoutOf(namespace.ns)
+  const layout = props.editor ?? layoutOf(namespace.ns)
   const keyRef = refFor(schema, namespace, settingsPath, props.provider)
   // The same schema read the create card makes, so the choices offered here
   // and there cannot drift apart: both come from the adapter's own `Config`.
   // Only the pi-ai layout has a per-route protocol for the read to find, and
   // it rehydrates the whole section schema, so the other layouts skip it.
   const protocols = useMemo(
-    () => layout === 'pi-ai' ? protocolChoices(namespace, schema) : [],
-    [layout, namespace, schema],
+    () => layout === 'pi-ai' ? protocolChoices(namespace, schema, settingsPath) : [],
+    [layout, namespace, schema, settingsPath],
   )
 
   const stringAt = (source: unknown, key: string): string | undefined => {
@@ -254,8 +260,8 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   // alike: the adapter resolves a row's `reasoningEfforts` the same way on
   // both, so the levels are read and the declarations checked for both.
   const schemaReasoningLevels = useMemo(
-    () => layout === 'pi-ai' ? reasoningLevelChoices(namespace, schema) : [],
-    [layout, namespace, schema],
+    () => layout === 'pi-ai' ? reasoningLevelChoices(namespace, schema, settingsPath) : [],
+    [layout, namespace, schema, settingsPath],
   )
   // What the form currently shows, which is what an interrogation must ask and
   // what decides the protocol's own constraints: an edited-but-unsaved protocol.
@@ -477,45 +483,62 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       },
       onReset: () => { setDraft(current => schema.deletePath(current, ['models'])) },
     }
+    const changeKey = (value: string): void => {
+      setKeyDraft(value === '' && savedCredential
+        ? detected[1].writable ? { ref: detected[0] } : undefined
+        : value)
+      setFailure(undefined)
+    }
+    const credential: ProviderAuthenticationOwnerProps['credential'] = {
+      label: t('keyInput'),
+      value: keyText,
+      placeholder: keyPlaceholder,
+      disabled: disabled || keyRemoval?.removed === true,
+      required: props.credentialRequired === true || protocolNeedsKeyHere,
+      autoFocus: props.autoFocusCredential === true,
+      ...(shownKeyFailure === undefined ? {} : { error: t(shownKeyFailure) }),
+      onChange: changeKey,
+    }
+    const nativeKey = keylessNativeAuth
+      ? null
+      : <div className={styles['field']}>
+        <span className={styles['fieldLabel']}>
+          {t('keyInput')}
+          {authHelp}
+        </span>
+        <ApiKeyInput
+          t={t}
+          value={keyText}
+          {...keyDraft === undefined && savedCredential ? {
+            saved: {
+              masked: detected[1].masked ?? '',
+              ...detected[1].writable
+                ? { clear: () => { setKeyDraft({ ref: detected[0] }); setFailure(undefined) } } : {},
+            },
+          } : {}}
+          placeholder={keyPlaceholder}
+          aria-label={t('keyInput')}
+          aria-invalid={shownKeyFailure !== undefined && !protocolKeyMissing}
+          aria-describedby={credentialHint === undefined ? undefined : `${props.provider}-credential-hint`}
+          required={props.credentialRequired === true || protocolNeedsKeyHere}
+          autoFocus={props.autoFocusCredential === true}
+          disabled={disabled || keyRemoval?.removed === true}
+          onChange={(event) => { changeKey(event.target.value) }}
+        />
+        {credentialHint === undefined ? null : <p id={`${props.provider}-credential-hint`} className={styles[keyRemoval !== undefined || missingRefs ? 'notice' : keyText.length > 0 || detectedRef === undefined ? 'advancedHint' : 'savedNotice']}>{credentialHint}</p>}
+        {/* A key the protocol requires is a requirement still to meet, not a fault. */}
+        {shownKeyFailure === undefined
+          ? null
+          : <p className={styles[protocolKeyMissing ? 'advancedHint' : 'error']}>{t(shownKeyFailure)}</p>}
+      </div>
+    const authentication = props.renderAuthentication?.(
+      'settings.models.provider-authentication',
+      { provider: props.provider, draft, fallback, disabled, setField, credential },
+      { entryKey: namespace.ns, fallback: nativeKey },
+    ) ?? nativeKey
     return (
       <>
-        {keylessNativeAuth
-          ? null
-          : <div className={styles['field']}>
-            <span className={styles['fieldLabel']}>
-              {t('keyInput')}
-              {authHelp}
-            </span>
-            <ApiKeyInput
-              t={t}
-              value={keyText}
-              {...keyDraft === undefined && savedCredential ? {
-                saved: {
-                  masked: detected[1].masked ?? '',
-                  ...detected[1].writable
-                    ? { clear: () => { setKeyDraft({ ref: detected[0] }); setFailure(undefined) } } : {},
-                },
-              } : {}}
-              placeholder={keyPlaceholder}
-              aria-label={t('keyInput')}
-              aria-invalid={shownKeyFailure !== undefined && !protocolKeyMissing}
-              aria-describedby={credentialHint === undefined ? undefined : `${props.provider}-credential-hint`}
-              required={props.credentialRequired === true || protocolNeedsKeyHere}
-              autoFocus={props.autoFocusCredential === true}
-              disabled={disabled || keyRemoval?.removed === true}
-              onChange={(event) => {
-                setKeyDraft(event.target.value === '' && savedCredential
-                  ? detected[1].writable ? { ref: detected[0] } : undefined
-                  : event.target.value)
-                setFailure(undefined)
-              }}
-            />
-            {credentialHint === undefined ? null : <p id={`${props.provider}-credential-hint`} className={styles[keyRemoval !== undefined || missingRefs ? 'notice' : keyText.length > 0 || detectedRef === undefined ? 'advancedHint' : 'savedNotice']}>{credentialHint}</p>}
-            {/* A key the protocol requires is a requirement still to meet, not a fault. */}
-            {shownKeyFailure === undefined
-              ? null
-              : <p className={styles[protocolKeyMissing ? 'advancedHint' : 'error']}>{t(shownKeyFailure)}</p>}
-          </div>}
+        {authentication}
         {props.credentialOnly === true ? null : <details
           className={styles['customized']}
           onToggle={(event) => { setCustomizedOpen(event.currentTarget.open) }}

@@ -91,7 +91,9 @@ Agent 步骤的并发上限使用 [agent-loop 配置](../agent-loop/README.zh.md
 
 `ctx.tools.guard(guard)` 在可扩展的 `tools/pre-execute` waterfall（瀑布式事件）之后注册单调同步守卫：返回的理由会拒绝调用，后续监听器无法把该拒绝重新变为允许。流水线事件给插件更多控制——`tools/pre-execute` 决定允许／拒绝／询问，`tools/execute` 为超时或重试包装分发，`tools/post-execute` 检查或替换结果，`tools/result` 观测冻结的最终结果。
 
-工具的 `projectContent` 在执行后策略之前安装执行期间准备的图文内容。策略仍可替换或阻止这些内容；`finalizeContent` 保留为策略之后的最终内容处理。
+工具的 `projectContent` 在执行后策略之前安装执行期间准备的图文内容。策略仍可替换或阻止这些内容；`finalizeContent` 保留为策略之后的最终内容处理。可选的 `finalizeMeta` 回调在策略和内容定稿后保留私有结果元数据，不改变纯函数式的 `output.presentationMeta` 投影。
+
+`ctx.tools.startHostCall(session, input)` 通过相同的策略流水线接受未注册的 Host 所拥有的工具。它在执行工具主体前持久化接受记录和调度意图，返回独立于观察者的完成结果，并按调用 ID 和完整调用身份去重。其事件不进入模型历史。恢复后仍未解决的调用报告未知结果；观察或重试不会再次执行。
 
 ### Host 展示描述
 

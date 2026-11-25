@@ -72,6 +72,10 @@ export interface JobView {
   readonly kind: string
   /** The producer-supplied one-line label. */
   readonly label: string
+  /** Tool invocation that started the job, when supplied by its producer. */
+  readonly callId?: string
+  /** Initial command working directory, when supplied by its producer. */
+  readonly cwd?: string
   /** Owning session; absent for an unowned job, which every caller can see. */
   readonly owner?: SessionId
   /** Producer-owned cap for complete model-facing notices and reads, in UTF-8 bytes. */

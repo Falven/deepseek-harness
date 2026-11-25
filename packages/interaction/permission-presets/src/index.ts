@@ -24,6 +24,7 @@ import type { CommandDefinitionId } from '@deepseek-ai/dsh-commands/types'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
@@ -268,7 +269,7 @@ export class PermissionPresetService extends TypertRemoteService {
         // No settlement text labels its value with this command's own name: a
         // surface that renders `name · text` (the web command row) would
         // otherwise read `permission · Permission preset: workspace-write.`
-        handler: ({ agent, rawInput }) => {
+        handler: async ({ agent, rawInput, signal }) => {
           const name = rawInput.trim()
           if (name === '') {
             return { kind: 'success', text: `current preset ${this.current(agent.session)} (available: ${this.names.join(', ')})` }
@@ -276,7 +277,22 @@ export class PermissionPresetService extends TypertRemoteService {
           if (!this.names.includes(name)) {
             return { kind: 'error', text: `unknown preset "${name}" (available: ${this.names.join(', ')})` }
           }
-          this.apply(agent.session, name, (policy) => { this.ctx.approval.setPolicy(agent, policy) })
+          const { session } = agent
+          if (agent.changeSettings === undefined) {
+            this.apply(session, name, (policy) => { this.ctx.approval.setPolicy(agent, policy) })
+            return { kind: 'success', text: `preset ${name}` }
+          }
+          await agent.changeSettings({ name: 'permission', value: name }, () => {
+            const previous = this.current(session)
+            const before = session.seq
+            this.set(session, name)
+            if (previous === name) return session.seq !== before
+            agent.inject(createUserMessage({
+              content: [{ type: 'text', text: `The permission preset changed from "${previous}" to "${name}" (changed by the user).` }],
+              source: { kind: 'user-approval' },
+            }))
+            return true
+          }, signal)
           return { kind: 'success', text: `preset ${name}` }
         },
       })

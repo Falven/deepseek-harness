@@ -98,6 +98,31 @@ describe('file-reference grammar', () => {
 })
 
 describe('WorkspaceFileSearch', () => {
+  it('uses a supplied filesystem without falling back to host paths', async () => {
+    const root = '/virtual/conversation'
+    const directories = new Map([
+      [root, [
+        { name: 'src', isDirectory: () => true, isFile: () => false },
+      ]],
+      [`${root}/src`, [
+        { name: 'report.ts', isDirectory: () => false, isFile: () => true },
+      ]],
+    ])
+    const files = new WorkspaceFileSearch(root, {
+      maxResults: 20, maxEntries: 100, excludedDirectories: [],
+    }, {
+      readDirectory: async path => directories.get(path) ?? [],
+      resolveDirectory: async (_root, path) => path === 'src/' ? `${root}/src` : undefined,
+    })
+    searches.push(files)
+    const signal = new AbortController().signal
+
+    expect(await files.list('report', signal)).toEqual([{ path: 'src/report.ts', kind: 'file' }])
+    expect(await files.list('src/', signal)).toEqual([{ path: 'src/report.ts', kind: 'file' }])
+    expect(await files.list('missing/', signal)).toEqual([])
+    expect(readdir).not.toHaveBeenCalled()
+  })
+
   it('lists live directory levels, descends, quotes spaces, and filters hidden/excluded entries', async () => {
     const root = await workspace()
     const files = search(root)

@@ -165,7 +165,7 @@ configuration(): Array<{ entry: Entry; inherited: Record<string, unknown>; overr
 /** Validate, persist, and reconcile a plugin's next config; ordinary fields keep normal lifecycle rules.
  * @param entry Current Loader entry, also used to detect replacement during the write.
  * @param change Derive a raw config from the current entry and its inherited layer.
- * @returns Fulfillment after Loader reconciliation completes.
+ * @returns Fulfillment after Loader reconciliation or durable Host deferral.
  */
 async edit( entry: Entry, change: (current: Record<string, unknown>, inherited: Record<string, unknown>) => Record<string, unknown>, ): Promise<void>
 ```
@@ -549,6 +549,22 @@ Profile patches were reconciled into the running Loader tree: every entry update
  * @mode emit
  */
 'app-boot/config-reload'(): void
+```
+
+Source: [`packages/boot/app-boot/src/index.ts`](../../packages/boot/app-boot/src/index.ts)
+
+<a id="app-bootprofile-reload--waterfall"></a>
+
+#### `app-boot/profile-reload` — waterfall
+
+Admit a profile application before it stops entries or publishes a runtime resolution.
+
+```ts cordis-catalog
+/** Admit a profile application before it stops entries or publishes a runtime resolution.
+ * @param profile - profile application awaiting admission.
+ * @mode waterfall
+ */
+'app-boot/profile-reload'(profile: ProfileContext, next: () => Promise<ProfileReloadOutcome>): Promise<ProfileReloadOutcome>
 ```
 
 Source: [`packages/boot/app-boot/src/index.ts`](../../packages/boot/app-boot/src/index.ts)

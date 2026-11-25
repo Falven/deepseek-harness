@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -67,6 +68,7 @@ describe.skipIf(!hasPwsh)('pwsh tool over the real pwsh executor', () => {
     provideWorkingDirectoryFixture(ctx)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SystemPrompt)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(LocalJobRegistry)

@@ -1,6 +1,6 @@
 /** Monotonic idle grace, independent window holds, and retryable terminal ownership. */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { SubprocessTerminalActivity } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessTerminalActivity, SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
 import { TerminalRetention, type TerminalRetentionPolicy } from '../src/retention.ts'
 
 const owners: TerminalRetention[] = []
@@ -8,7 +8,7 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'pe
 afterEach(async () => { await Promise.allSettled(owners.splice(0).map(owner => owner.dispose())); vi.useRealTimers() })
 
 function fixture(policy: Partial<TerminalRetentionPolicy> = {}) {
-  const inspect = vi.fn(async (): Promise<SubprocessTerminalActivity> => ({ state: 'idle', revision: 1 }))
+  const inspect = vi.fn<SubprocessTerminalHandle['inspectActivity']>(async () => ({ state: 'idle', revision: 1 }))
   const terminate = vi.fn(async () => {})
   const failed = vi.fn()
   const owner = new TerminalRetention(
@@ -22,9 +22,56 @@ it('starts the whole idle grace at the first positive observation and clears onl
   const h = fixture()
   await vi.advanceTimersByTimeAsync(99)
   expect(h.terminate).not.toHaveBeenCalled()
+  expect(h.inspect.mock.calls.some(([options]) => options?.fresh)).toBe(false)
   await vi.advanceTimersByTimeAsync(1)
+  expect(h.inspect).toHaveBeenLastCalledWith({ fresh: true })
   expect(h.terminate).toHaveBeenCalledOnce()
   await vi.advanceTimersByTimeAsync(1000)
+  expect(h.terminate).toHaveBeenCalledOnce()
+})
+
+it.each([
+  { state: 'busy', revision: 1 },
+  { state: 'unknown', revision: 1 },
+  { state: 'idle', revision: 2 },
+] as const)('rejects retained idle evidence when the deadline observes $state revision $revision', async (activity) => {
+  const h = fixture()
+  h.inspect.mockImplementation(async options => options?.fresh ? activity : { state: 'idle', revision: 1 })
+  await vi.advanceTimersByTimeAsync(100)
+  expect(h.inspect).toHaveBeenLastCalledWith({ fresh: true })
+  expect(h.terminate).not.toHaveBeenCalled()
+  h.inspect.mockResolvedValue({ state: 'idle', revision: 2 })
+  await vi.advanceTimersByTimeAsync(99)
+  expect(h.terminate).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(11)
+  expect(h.terminate).toHaveBeenCalledOnce()
+})
+
+it('starts a new idle grace when the required fresh observation fails', async () => {
+  const h = fixture()
+  await vi.advanceTimersByTimeAsync(90)
+  h.inspect.mockRejectedValueOnce(new Error('Sandbox unavailable'))
+  await vi.advanceTimersByTimeAsync(10)
+  expect(h.inspect).toHaveBeenLastCalledWith({ fresh: true })
+  expect(h.terminate).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(109)
+  expect(h.terminate).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1)
+  expect(h.terminate).toHaveBeenCalledOnce()
+})
+
+it('requires a fresh observation even when a retained read spans the deadline', async () => {
+  const h = fixture({ activityPollIntervalMs: 15 })
+  await vi.advanceTimersByTimeAsync(75)
+  const pending = Promise.withResolvers<SubprocessTerminalActivity>()
+  h.inspect.mockReturnValueOnce(pending.promise)
+  await vi.advanceTimersByTimeAsync(26)
+  expect(h.inspect).toHaveBeenLastCalledWith(undefined)
+  pending.resolve({ state: 'idle', revision: 1 })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(h.terminate).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(15)
+  expect(h.inspect).toHaveBeenLastCalledWith({ fresh: true })
   expect(h.terminate).toHaveBeenCalledOnce()
 })
 
@@ -80,6 +127,7 @@ it('discards an asynchronous observation invalidated by a reconnect and its subs
   const pending = Promise.withResolvers<SubprocessTerminalActivity>()
   h.inspect.mockReturnValueOnce(pending.promise)
   await vi.advanceTimersByTimeAsync(10)
+  expect(h.inspect).toHaveBeenLastCalledWith({ fresh: true })
   const abort = new AbortController()
   const stream = h.owner.retain(abort.signal)[Symbol.asyncIterator]()
   await stream.next()

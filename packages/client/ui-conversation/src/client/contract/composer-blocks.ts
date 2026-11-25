@@ -13,8 +13,9 @@ export interface ComposerBlocks {
    * Raise or clear this session's block.
    * @param sessionId - Session whose composer is affected.
    * @param block - Block to raise, or undefined to clear it.
+   * @param owner - Independent blocker identity; omitted preserves the default owner.
    */
-  set(sessionId: SessionId, block: ComposerBlock | undefined): void
+  set(sessionId: SessionId, block: ComposerBlock | undefined, owner?: string): void
   /**
    * Resolve the observable block state for one Session.
    * @param sessionId - Session to observe.

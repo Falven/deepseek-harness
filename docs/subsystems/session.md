@@ -25,6 +25,12 @@ interface UserMessage extends MessageBase {
  * compact raw streams so persistence stores one durable settlement per attempt.
  */
 interface SessionEventMap {
+  /** Host-admitted Tool evidence; log-only, never a model Tool request. */
+  'tool/host-call': HostToolCallData
+  /** Durable dispatch intent, flushed before entering the Tool body. */
+  'tool/host-dispatch': { turn: null; callId: ToolCallId }
+  /** Settlement of the same Host invocation; log-only. */
+  'tool/host-result': HostToolResultData
   /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no
@@ -1367,6 +1373,42 @@ Source: [`packages/api/session-controller/src/types.ts`](../../packages/api/sess
 
 ### `session/*` events
 
+<a id="sessionattachment-admit--waterfall"></a>
+
+#### `session/attachment-admit` — waterfall
+
+Scope image storage during prompt admission to the validated Agent.
+
+```ts cordis-catalog
+/** Scope image storage during prompt admission to the validated Agent.
+ * @param payload - Agent whose prompt is being admitted.
+ * @mode waterfall
+ */
+'session/attachment-admit'(payload: { agent: Agent }, next: () => Promise<AdmittedPromptContentPart[]>): Promise<AdmittedPromptContentPart[]>
+```
+
+Types: [AdmittedPromptContentPart](attachment.md) · [Agent](core.md)
+
+Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
+
+<a id="sessionattachment-read--waterfall"></a>
+
+#### `session/attachment-read` — waterfall
+
+Scope an attachment-store read to the Session authorized by the gateway.
+
+```ts cordis-catalog
+/** Scope an attachment-store read to the Session authorized by the gateway.
+ * @param payload - Session whose image is being read.
+ * @mode waterfall
+ */
+'session/attachment-read'(payload: { sessionId: SessionId }, next: () => Promise<StoredImageAttachment>): Promise<StoredImageAttachment>
+```
+
+Types: [SessionId](core.md) · [StoredImageAttachment](attachment.md)
+
+Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
+
 <a id="sessioncreated--emit"></a>
 
 #### `session/created` — emit
@@ -1462,6 +1504,24 @@ Awaited parallel durability checkpoint: every listener runs and the caller await
 Types: [Scoped](scope.md)
 
 Source: [`packages/core/session/src/index.ts`](../../packages/core/session/src/index.ts)
+
+<a id="sessioninput-source--waterfall"></a>
+
+#### `session/input-source` — waterfall
+
+Attach trusted Host attribution before native input admission.
+
+```ts cordis-catalog
+/** Attach trusted Host attribution before native input admission.
+ * @param payload - Agent and message awaiting source attribution.
+ * @mode waterfall
+ */
+'session/input-source'(payload: { agent: Agent; message: UserMessage }, next: () => Promise<MessageSource>): Promise<MessageSource>
+```
+
+Types: [Agent](core.md) · [MessageSource](llm-streaming.md)
+
+Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 
 <a id="timeline-events"></a>
 

@@ -446,3 +446,16 @@ describe('openTurnClosers model-visible wording', () => {
     expect(end?.type === 'turn/end' && end.data.reason).toEqual({ kind: 'interrupted' })
   })
 })
+
+it('repairs independent Host calls after a closed turn and at a Fork boundary without model results', () => {
+  const call = { turn: null, callId: 'app-call', name: 'app_action', arguments: { exact: 1 }, source: { name: 'App', actor: { id: 'alice', name: 'Alice' } } }
+  const accepted = [{ type: 'tool/host-call', seq: 0, time: 10, data: call }]
+  expect(interruptedTurnClosers(accepted)).toMatchObject([{ type: 'tool/host-result', data: { status: 'not-dispatched', callId: 'app-call' } }])
+  const dispatched = [...accepted, { type: 'tool/host-dispatch', seq: 1, time: 11, data: { turn: null, callId: 'app-call' } }]
+  for (const kind of ['interrupted', 'forked'] as const) {
+    const repaired = openTurnClosers(dispatched, { kind })
+    expect(repaired).toHaveLength(1)
+    expect(repaired[0]).toMatchObject({ type: 'tool/host-result', seq: 2, data: { ...call, status: 'unknown', startedAt: 10 } })
+    expect(interruptedTurnClosers([...dispatched, ...repaired])).toEqual([])
+  }
+})

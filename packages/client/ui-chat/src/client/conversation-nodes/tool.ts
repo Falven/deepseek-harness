@@ -39,6 +39,13 @@ function jsonArguments(value: unknown): string {
 }
 
 function rootCall(match: ConversationMatch, previous?: ToolCallBlock): StartedToolCall {
+  if (match.event.type === 'tool/host-call') {
+    const { data, time } = match.event
+    const argsRaw = JSON.stringify(data.arguments)
+    return { phase: 'start', callId: String(data.callId), name: data.name, argsRaw,
+      args: PartialArguments.fromText(argsRaw), source: data.source,
+      turn: null, step: null, time, subCalls: [] }
+  }
   if (match.event.type !== 'tool/call') throw new Error('tool-call start requires tool/call')
   return {
     phase: 'start',
@@ -98,6 +105,16 @@ function preparingBlock(root: PreparingToolCall, current: ToolCallBlock | undefi
 }
 
 function rootResult(match: ConversationMatch, previous?: StartedToolCall): ToolResultNode | undefined {
+  if (match.event.type === 'tool/host-result') {
+    const { data, time, seq } = match.event
+    const argsRaw = JSON.stringify(data.arguments)
+    return { kind: 'tool-result', seq, time, callId: String(data.callId),
+      name: data.name, args: PartialArguments.fromText(argsRaw),
+      call: { name: data.name, argsRaw }, callTime: data.startedAt,
+      source: data.source, status: data.status, value: data.value,
+      content: data.content, isError: data.isError, meta: data.meta,
+      ...data.error === undefined ? {} : { error: data.error }, subCalls: [] }
+  }
   if (match.event.type !== 'tool/result') return undefined
   const message = match.event.data.message
   return {
@@ -280,7 +297,7 @@ function interruption(context: ConversationNodeContext<ToolState>): { seq: numbe
 }
 
 function fallbackState(context: ConversationNodeContext<ToolState>): ToolState | undefined {
-  const match = context.matches.find(candidate => candidate.event.type === 'tool/result')
+  const match = context.matches.find(candidate => candidate.event.type === 'tool/result' || candidate.event.type === 'tool/host-result')
   const root = match === undefined ? undefined : rootResult(match)
   if (root === undefined) return undefined
   let state: ToolState = { root, children: new Map(), parents: new Map() }
@@ -301,7 +318,8 @@ export const toolDefinition: ConversationNodeDefinition<ToolState> = {
       }
       return chunk.type === 'tool-call-delta' ? { id: String(chunk.id), role: 'start' } : null
     }
-    if (event.type === 'tool/call') return { id: String(event.data.callId), role: 'start' }
+    if (event.type === 'tool/call' || event.type === 'tool/host-call') return { id: String(event.data.callId), role: 'start' }
+    if (event.type === 'tool/host-result') return { id: String(event.data.callId), role: 'update' }
     if (event.type === 'tool/result' && isAppendSurfaceEvent(event)) {
       return { id: String(event.data.message.source.callId), role: 'update' }
     }
@@ -315,12 +333,13 @@ export const toolDefinition: ConversationNodeDefinition<ToolState> = {
   },
   start: (_context, match) => {
     const state: ToolState = { root: undefined, children: new Map(), parents: new Map() }
-    return match.event.type === 'tool/call' ? { ...state, root: rootCall(match) } : applyDelta(state, match)
+    return match.event.type === 'tool/call' || match.event.type === 'tool/host-call'
+      ? { ...state, root: rootCall(match) } : applyDelta(state, match)
   },
   update: (context, match) => {
     if (match.event.type === 'assistant/live-chunk') return applyDelta(context.state, match)
-    if (match.event.type === 'tool/call') return { ...context.state, root: rootCall(match, context.state.root) }
-    if (match.event.type === 'tool/result') {
+    if (match.event.type === 'tool/call' || match.event.type === 'tool/host-call') return { ...context.state, root: rootCall(match, context.state.root) }
+    if (match.event.type === 'tool/result' || match.event.type === 'tool/host-result') {
       const root = context.state.root
       const running = root !== undefined && !('kind' in root) && root.phase === 'start' ? root : undefined
       const result = rootResult(match, running)
@@ -363,7 +382,9 @@ export function registerToolConversationNode(ctx: Context): void {
     match: {
       'assistant/live-chunk': match,
       'tool/call': match,
+      'tool/host-call': match,
       'tool/result': match,
+      'tool/host-result': match,
       'tool/ptc-dispatch-start': match,
       'tool/ptc-dispatch': match,
     },

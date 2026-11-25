@@ -22,7 +22,7 @@ import { apply as applyConversation, inject as injectConversation } from '@deeps
 import { apply as applyTool, inject as injectTool } from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
-import { toolSessionEvents } from './tool-fixtures.client.ts'
+import { mountToolJobs, toolSessionEvents } from './tool-fixtures.client.ts'
 
 const SID = 's1' as SessionId
 // jsdom omits font loading events used by the resident composer.
@@ -115,6 +115,7 @@ async function bench(nodes: ToolResultNode[]) {
   await runtime.root.declare(LAYOUT_CHILDREN, AppRoot)
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation }, syncedConfig({ busyEnter: 'queue', maxConcurrentFileUploads: 2 }))
   await runtime.mount({ inject: [...injectChat], apply: applyChat })
+  await mountToolJobs(runtime)
   await runtime.mount({ inject: [...injectTool], apply: applyTool })
   return { runtime, slots: runtime.slots, layout, openWorkspacePath, sidebarRight }
 }
@@ -406,6 +407,7 @@ describe('registrant declaration injection', () => {
     // Mounting the package declares the slot and activates the waiting entry.
     await runtime.mount({ inject: [...injectConversation], apply: applyConversation }, syncedConfig({ busyEnter: 'queue', maxConcurrentFileUploads: 2 }))
     await runtime.mount({ inject: [...injectChat], apply: applyChat })
+    await mountToolJobs(runtime)
     await runtime.mount({ inject: [...injectTool], apply: applyTool })
     expect(runtime.slots.entries('tool.call.toolview').map(e => e.options.key))
       .toEqual(expect.arrayContaining(['bash', 'late']))

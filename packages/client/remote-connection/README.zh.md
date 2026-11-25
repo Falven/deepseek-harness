@@ -91,10 +91,10 @@ owner 的审批返回 `approved`、`denied` 或 `unavailable` 后，卡片先从
 ```ts client
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { FunctionComponent } from 'react'
+import type { ReactNode } from 'react'
 import type { RemoteConnectionExtensionProps } from '@deepseek-ai/dsh-client-remote-connection/client'
 
-declare const ConnectionOptions: FunctionComponent<RemoteConnectionExtensionProps>
+declare function ConnectionOptions(props: RemoteConnectionExtensionProps): ReactNode
 
 export const inject = ['slots']
 
@@ -117,10 +117,10 @@ export function apply(ctx: Context): void {
 ```ts client
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { FunctionComponent } from 'react'
+import type { ReactNode } from 'react'
 import type { RemoteConnectionContentProps } from '@deepseek-ai/dsh-client-remote-connection/client'
 
-declare const CustomPanel: FunctionComponent<RemoteConnectionContentProps>
+declare function CustomPanel(props: RemoteConnectionContentProps): ReactNode
 
 export const inject = ['slots']
 

@@ -1,5 +1,5 @@
 /** Ordered Chat rows, local echoes, and running status share the flow slot's parent. */
-import { memo, type ReactElement } from 'react'
+import { Fragment, memo, type ReactElement } from 'react'
 import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { ChatFlowSlotProps } from '../contract/slots.ts'
@@ -27,7 +27,7 @@ export const ChatFlow = memo(function ChatFlow({
   entries, pendingInputs, lastInputTurn, deferCollapse,
   useSession, useChat, useChatNode, useChatNodeBottom, useChatNodeProcess, useChatGroup, usePresentation, useConnectionState,
   useStore, actions, renderSlot, renderFactorySlot, t, useGroupAction, useGroupHeaderAction,
-  cwd, openFile, inspectCall, forkAt, loadImage,
+  sessionId, cwd, openFile, inspectCall, forkAt, loadImage,
 }: ChatFlowSlotProps) {
   const nodeStore = useChat(snapshot => snapshot.nodes)
   const running = useSession(snapshot => snapshot.running)
@@ -47,7 +47,7 @@ export const ChatFlow = memo(function ChatFlow({
   const seatProps = {
     nodeStore, useChatNode, useChatNodeBottom, useChatNodeProcess, usePresentation,
     useStore, actions, renderSlot, t, useGroupAction, deferCollapse,
-    cwd, openFile, inspectCall, forkAt, loadImage,
+    sessionId, cwd, openFile, inspectCall, forkAt, loadImage,
   }
   const rows = entries.map((entry) => {
     switch (entry.kind) {
@@ -72,10 +72,18 @@ export const ChatFlow = memo(function ChatFlow({
   const pendingRows: ReactElement[] = []
   for (const [index, item] of pendingInputs.entries()) {
     const row = isLocalSubmission(item)
-      ? <PendingSubmissionBubble key={item.requestId} submission={item}
-        loadImage={loadImage} renderFactorySlot={renderFactorySlot} t={t} />
-      : <PendingSteeringBubble key={item.id} content={item.content}
-        loadImage={loadImage} renderFactorySlot={renderFactorySlot} t={t} />
+      ? (
+        <Fragment key={item.requestId}>
+          {renderSlot('conversation.chat.user.header', { requestId: item.requestId, time: item.time })}
+          <PendingSubmissionBubble submission={item} loadImage={loadImage} renderFactorySlot={renderFactorySlot} t={t} />
+        </Fragment>
+      )
+      : (
+        <Fragment key={item.id}>
+          {renderSlot('conversation.chat.user.header', { source: item.source })}
+          <PendingSteeringBubble content={item.content} loadImage={loadImage} renderFactorySlot={renderFactorySlot} t={t} />
+        </Fragment>
+      )
     if (index <= firstTranscript) leadingRows.push(row)
     else if (isTranscriptEcho(item)) openingRows.push(row)
     else pendingRows.push(row)

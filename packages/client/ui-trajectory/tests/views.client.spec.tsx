@@ -1327,6 +1327,22 @@ describe('timeline projection', () => {
     })
   })
 
+  it.each(['sequence', 'duration', 'time', 'actual'] as const)('keeps one %s boundary when a Turn resumes after Session activity', (mode) => {
+    const splitTurns: readonly TrajectoryTurnModel[] = [1, 2, null, 2].map((turn, index) => ({
+      turn,
+      groups: [{ title: 'Step 1', cells: [{
+        index: index + 1, kind: turn === null ? 'tool' : 'message', text: `record ${index + 1}`,
+        startedAt: (index + 1) * 1000, timeSeconds: 1,
+      }] }],
+    }))
+    expect(deriveTrajectoryTimeline(splitTurns, mode)?.turnBoundaries).toEqual([
+      { turn: 1, time: mode === 'sequence' ? 0 : 1000 },
+      { turn: 2, time: mode === 'sequence' ? 1 : 2000 },
+    ])
+    const view = render(<TrajectoryTimeline turns={splitTurns} mode={mode} range={null} onRangeChange={() => {}} />)
+    expect(view.container.querySelectorAll('[data-turn="2"]')).toHaveLength(1)
+  })
+
   it('empty inputs produce no model and the standalone view reports its empty form', () => {
     expect(deriveTrajectoryTimeline([])).toBeNull()
     render(createElement(

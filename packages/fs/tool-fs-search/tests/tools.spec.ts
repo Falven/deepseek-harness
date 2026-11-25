@@ -14,15 +14,16 @@ import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { provideWorkingDirectoryFixture } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import { join, sep } from 'node:path'
 import { createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH, type ToolExecution, type ToolExecutionToken } from '@deepseek-ai/dsh-tools'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { SubprocessExecutableNotFoundError, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type { SubprocessCollectedOutputs, SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { rgPath } from '@vscode/ripgrep'
@@ -210,6 +211,7 @@ async function setup(options: SetupOptions = {}) {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(NativeToolExecutor)
+  await ctx.plugin(LocalFileSystem)
   await ctx.plugin(FakeSubprocess)
   const subprocess = ctx.subprocess as FakeSubprocess
   if (options.spill === true) await ctx.plugin(FakeSpill)
@@ -275,6 +277,7 @@ describe('registration', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(ToolFsSearch, DEFAULT_CONFIG) // no subprocess service
     expect(ctx.tools.schemas()).toHaveLength(0)
   })
@@ -333,6 +336,7 @@ describe('config validation', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(FakeSubprocess)
     await expect(ctx.plugin(ToolFsSearch, { ...DEFAULT_CONFIG, ...config })).rejects.toThrow(new RegExp(`tool-fs-search: ${name} must be a positive integer`))
   })
@@ -344,6 +348,7 @@ describe('config validation', () => {
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(NativeToolExecutor)
+    await ctx.plugin(LocalFileSystem)
     await ctx.plugin(FakeSubprocess)
     await expect(ctx.plugin(ToolFsSearch, {
       ...DEFAULT_CONFIG,
@@ -406,6 +411,23 @@ describe('command construction (plain argv)', () => {
 })
 
 describe('workdir derivation and signal forwarding', () => {
+  it('resolves a Session search into the filesystem provider execution world', async () => {
+    const { ctx, subprocess } = await setup()
+    const host = '/host/repository'
+    const remote = '/sandbox/workspace'
+    const resolvePath = ctx.fs.resolve.bind(ctx.fs)
+    vi.spyOn(ctx.fs, 'resolve').mockImplementation((path, options) => resolvePath(path.replace(host, remote), {
+      ...options,
+      ...(options?.cwd === undefined ? {} : { cwd: options.cwd.replace(host, remote) }),
+    }))
+    subprocess.handler = () => runResult(`${remote}/tools/x.ts\n`)
+    const result = await call(ctx, 'glob', { pattern: '*.ts', path: `${host}/tools` }, { agent: agent(host) })
+    expect(result.isError).toBe(false)
+    expect(result.value).toEqual({ root: 'tools', paths: [join('tools', 'x.ts')] })
+    expect(subprocess.spawns[0]?.cwd).toBe(remote)
+    expect(subprocess.spawns[0]?.argv.slice(-2)).toEqual(['--', `${remote}/tools`])
+  })
+
   it('forwards the session cwd as the spawn cwd', async () => {
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => runResult('a.ts\n')
@@ -561,6 +583,16 @@ describe('workdir derivation and signal forwarding', () => {
     await setup()
     expect(await resolveRgPath()).toBe(rgPath)
     expect(resolveRgPath()).toBe(resolveRgPath())
+  })
+
+  it('uses the remote provider ripgrep when the Host package path is absent', async () => {
+    const { ctx, subprocess } = await setup()
+    subprocess.resolveExecutable = vi.fn(async (command) => {
+      if (command === rgPath) throw new SubprocessExecutableNotFoundError('Host path is unavailable remotely')
+      return '/remote/bin/rg'
+    })
+    expect((await call(ctx, 'glob', { pattern: '*' })).isError).toBe(false)
+    expect(subprocess.spawns[0]?.argv[0]).toBe('/remote/bin/rg')
   })
 
   it('rejects when the subprocess implementation drops a requested collect stream', async () => {

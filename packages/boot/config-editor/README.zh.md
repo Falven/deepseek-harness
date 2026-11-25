@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-将插件配置保存到当前 profile 的 patch 并立即应用。写入在改动磁盘前验证完整候选值，并与 profile 更改及 HMR 串行执行。无效值和更高层覆盖不会改动文件。
+将插件配置保存到当前 profile 的 patch，并在 Host 准入后应用。写入在改动磁盘前验证完整候选值，并与 profile 更改及 HMR 串行执行。无效值和更高层覆盖不会改动文件。
 
 ## 目录
 
@@ -39,6 +39,8 @@ kind: "package-reference"
 <summary>实现内部细节——点击展开</summary>
 
 [编辑器](src/index.ts) 在派生候选配置前应用外部更改，与其他 profile 操作共同锁定 profile manifest，并原子替换配置覆盖项。它保留替换值以外的 YAML 注释和 `!!js` 表达式。应用失败时恢复之前的文档并重新加载之前的 patch。
+
+Host 推迟激活时，`edit()` 在收到 `ProfileReloadDeferred` 后保留已保存的文档并返回；Host 的完成 promise 在排队的重载后结算。启用 HMR 时，该续行会重新进入重载队列。其他应用失败会恢复之前的文档。
 
 读取配置时，没有 profile config 覆盖项的条目共用一次组合结果。有覆盖项的条目分别组合，仅移除自身的覆盖项；profile 插入的条目和其他条目的覆盖项仍然生效。返回的配置为独立副本，组合结果不跨读取缓存。
 

@@ -48,6 +48,7 @@ function stubAgent(ctx: Context, rawId: string): Agent {
     send: () => {},
     followup: () => {}, steer: () => {}, inject: () => {}, cancel() {},
     runMaintenance: task => task(new AbortController().signal),
+    changeSettings: async (_change, apply) => apply(),
     whenIdle: () => Promise.resolve(),
   }
   return agent

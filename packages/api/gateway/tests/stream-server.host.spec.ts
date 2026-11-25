@@ -1,5 +1,6 @@
 import { once } from 'node:events'
-import { createServer, type Server } from 'node:http'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf, type PeerId, type PeerScope } from '@deepseek-ai/dsh-typert-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +28,61 @@ afterEach(async () => {
 })
 
 describe('Remote stream mux server carrier lifecycle', () => {
+  it('keeps each upgrade request scope through asynchronous logical streams', async () => {
+    const actor = new AsyncLocalStorage<string>()
+    const entry = await startMux(async () => (async function* () {
+      await Promise.resolve()
+      yield actor.getStore()
+    })(), 2_000, 262_144, true, undefined, undefined,
+    (request, next) => actor.run(String(request.headers['x-actor']), next))
+    const alice = new WebSocket(entry.url, { headers: { 'x-actor': 'alice' } })
+    const bob = new WebSocket(entry.url, { headers: { 'x-actor': 'bob' } })
+    await Promise.all([once(alice, 'open'), once(bob, 'open')])
+    const aliceFrames = collectFrames(alice)
+    const bobFrames = collectFrames(bob)
+    alice.send(openFrame('a'))
+    bob.send(openFrame('b'))
+    await vi.waitFor(() => {
+      expect(aliceFrames).toContainEqual({ type: 'item', streamId: 'a', value: 'alice' })
+      expect(bobFrames).toContainEqual({ type: 'item', streamId: 'b', value: 'bob' })
+    })
+    alice.close()
+    bob.close()
+    await Promise.all([once(alice, 'close'), once(bob, 'close')])
+  })
+
+  it('fails denied logical streams and keeps their socket usable', async () => {
+    let attempts = 0
+    const entry = await startMux(async () => (async function* () { yield 'allowed' })(), 2_000, 262_144, true, undefined, undefined, (_request, next) => {
+      attempts++
+      if (attempts === 1) throw new Error('sync denial')
+      if (attempts === 2) return Promise.reject(new Error('async denial'))
+      if (attempts === 3) return Promise.resolve()
+      return next()
+    })
+    const client = await connect(entry.url)
+    const frames = collectFrames(client)
+    client.send(openFrame('sync'))
+    await vi.waitFor(() => { expect(frames).toHaveLength(1) })
+    client.send(openFrame('async'))
+    await vi.waitFor(() => { expect(frames).toHaveLength(2) })
+    client.send(openFrame('undelegated'))
+    await vi.waitFor(() => { expect(frames).toHaveLength(3) })
+    client.send(openFrame('allowed'))
+    await vi.waitFor(() => {
+      expect(frames).toEqual([
+        { type: 'error', streamId: 'sync', error: { code: 'internal', message: 'sync denial', details: {} } },
+        { type: 'error', streamId: 'async', error: { code: 'internal', message: 'async denial', details: {} } },
+        { type: 'error', streamId: 'undelegated', error: { code: 'internal', message: 'api gateway: Remote stream request scope did not delegate', details: {} } },
+        { type: 'item', streamId: 'allowed', value: 'allowed' },
+        { type: 'end', streamId: 'allowed' },
+      ])
+    })
+    expect(client.readyState).toBe(WebSocket.OPEN)
+    client.close()
+    await once(client, 'close')
+  })
+
   it('sends WebSocket Ping control frames without application messages', async () => {
     const entry = await startMux(async (_endpoint, _payload, _uplink, _peer, control) => waitForAbort(control.signal), 20)
     const client = await connect(entry.url)
@@ -854,6 +910,7 @@ async function startMux(
   compression = true,
   peer?: PeerScope,
   streamOutboxBytes = 1_048_576,
+  scope?: (request: IncomingMessage, next: () => Promise<void>) => Promise<void>,
 ): Promise<RunningMux> {
   const admitted = peer ?? await fixturePeer()
   const mux = new RemoteStreamMuxServer(open, mapFailure, {
@@ -863,7 +920,9 @@ async function startMux(
     compression,
   })
   const http = createServer()
-  http.on('upgrade', (request, socket, head) => { mux.handleUpgrade(request, socket, head, admitted) })
+  http.on('upgrade', (request, socket, head) => {
+    mux.handleUpgrade(request, socket, head, admitted, scope && (next => scope(request, next)))
+  })
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject)
     http.listen(0, '127.0.0.1', () => {

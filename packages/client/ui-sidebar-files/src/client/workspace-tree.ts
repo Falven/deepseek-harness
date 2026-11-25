@@ -29,7 +29,6 @@ import { childPath, type DirLevel, type FilesTreeState } from './store.ts'
 export function failureLine(t: TranslateNS<'sidebarFiles'>, failure: RemoteFailure): string {
   switch (failure.code) {
     case 'workspace-file/not-found': return t('error.notFound')
-    case 'workspace-file/outside-workspace': return t('error.outsideWorkspace')
     case 'workspace-file/not-directory': return t('error.notDirectory')
     // Carrier and unclassified host failures reach the reader as themselves:
     // this tree knows nothing useful to add to a transport-level message.

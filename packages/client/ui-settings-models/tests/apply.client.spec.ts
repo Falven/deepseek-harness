@@ -74,6 +74,8 @@ function automaticSource(slots: SlotRegistry): ObservableSnapshot<boolean> {
 
 describe('ui-settings-models apply', () => {
   it('declares a live credential-onboarding switch without Host behavior', () => {
+    expect(hostPlugin.Config({}).onboarding.get()).toBe(true)
+    expect(hostPlugin.Config({ onboarding: false }).onboarding.get()).toBe(false)
     expect(hostPlugin.Config({}).credentialOnboarding.get()).toBe(true)
     expect(hostPlugin.Config({ credentialOnboarding: false }).credentialOnboarding.get()).toBe(false)
     expect(hostPlugin.Config['~standard'].validate({ credentialOnboarding: 'false' })).toHaveProperty('issues')
@@ -90,7 +92,10 @@ describe('ui-settings-models apply', () => {
       expect(automaticSource(slots).getSnapshot()).toBe(false)
       expect(slots.entries('settings.section').map(entry => entry.options.id)).toEqual(['models'])
       await plugin.dispose()
+      const disabled = ctx.plugin({ inject: [...inject], apply }, syncedConfig({ onboarding: false }))
+      await disabled.await()
       expect(slots.entries('settings.onboarding')).toEqual([])
+      expect(slots.entries('settings.section').map(entry => entry.options.id)).toEqual(['models'])
     } finally {
       await ctx.fiber.dispose()
     }
@@ -103,7 +108,7 @@ describe('ui-settings-models apply', () => {
       const value = createSnapshotStore<boolean | undefined>(undefined)
       const read = (): boolean | undefined => value.getSnapshot()
       const ref = { get: read, getSnapshot: read, subscribe: (fn: () => void) => value.subscribe(fn) }
-      await ctx.plugin({ inject: [...inject], apply }, { credentialOnboarding: ref }).await()
+      await ctx.plugin({ inject: [...inject], apply }, { ...syncedConfig({}), credentialOnboarding: ref }).await()
       const source = automaticSource(slots)
       expect(source.getSnapshot()).toBe(true)
       const listener = vi.fn()

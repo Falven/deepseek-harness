@@ -632,7 +632,10 @@ describe('FileSystemSkillProvider', () => {
       { kind: 'present', version: brandString<FsVersion>('failed-read') },
       { name: 'edit' },
     )
-    expect(await ctx.skills.snapshot()).toEqual({ skills: [], complete: false })
+    const failedSnapshot = await ctx.skills.snapshot()
+    expect(failedSnapshot.skills).toEqual([])
+    expect(failedSnapshot.complete).toBe(false)
+    expect(failedSnapshot.reason).toContain('list temporarily failed')
 
     fs.failListDirPaths.clear()
     expect(await ctx.skills.snapshot()).toMatchObject({
@@ -719,7 +722,9 @@ describe('FileSystemSkillProvider', () => {
     await writeSkill(join(home, '.dsh/skills'), 'healthy-skill', 'Healthy native root')
     const ctx = await setupLocal(home)
 
-    expect(await ctx.skills.snapshot()).toMatchObject({ skills: [{ name: 'healthy-skill' }], complete: false })
+    expect(await ctx.skills.snapshot()).toMatchObject({
+      skills: [{ name: 'healthy-skill' }], complete: false, reason: expect.stringContaining('EISDIR'),
+    })
   })
 
   it('forwards cancellation to filesystem reads while loading a skill', async () => {

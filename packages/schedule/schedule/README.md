@@ -185,6 +185,12 @@ History stays with the task and is pruned only on append. Missing old history ke
 -----
 
 <a id="further-exploration"></a>
+### Host admission and delivery
+
+The Host may register `schedule/task-source` to capture a verified source with each durable task edit. `schedule/delivery-source` validates that source before target activation. For an existing target Session, `schedule/dispatch` gates restoration and enqueue. Recurring deliveries share a message only when the target and saved source key agree. If a timed reminder reached the inbox and the task write failed, the runtime uses that same message identity to finish the receipt on a later drive.
+
+The Host may pause active reminders for a retiring target through `pauseSession(sessionId)`. An explicit resume returns a paused reminder to native scheduling.
+
 ## Further Exploration
 
 - [Schedule subsystem](../../../docs/subsystems/schedule.md) — timing, management, storage, and delivery contracts.

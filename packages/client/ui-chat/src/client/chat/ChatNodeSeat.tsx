@@ -49,7 +49,7 @@ function turnOf(node: ChatNode | undefined): number | undefined {
  */
 export const ChatNodeSeat = memo(function ChatNodeSeat({
   nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
-  cwd, openFile, inspectCall, forkAt,
+  sessionId, cwd, openFile, inspectCall, forkAt,
   loadImage, useStore, actions, renderSlot, t, useChatNodeBottom, deferCollapse, useGroupAction,
 }: ChatNodeSeatProps) {
   const bottom = useChatNodeBottom(nodeKey)
@@ -133,6 +133,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     ? null
     : {
       ...groupPart === undefined ? {} : { groupPart },
+      sessionId,
       cwd,
       openFile,
       inspectCall,
@@ -140,7 +141,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       loadImage,
       turnProcess,
     }, [
-    node, groupPart, cwd, openFile, inspectCall, forkAt,
+    node, groupPart, sessionId, cwd, openFile, inspectCall, forkAt,
     loadImage, turnProcess,
   ])
   if (routedNode === undefined || owner === null) return null
@@ -163,6 +164,11 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-turn-process-member={processMember || undefined}
       data-turn-process-hidden={processHidden || undefined}
     >
+      {(routedNode.kind === 'user' || routedNode.kind === 'steering')
+        && renderSlot('conversation.chat.user.header', {
+          source: routedNode.data.source,
+          time: routedNode.data.time,
+        })}
       {renderSlot('conversation.chat.node', routedOwner, {
         entryKey: routedNode.kind,
         hookContext,

@@ -483,6 +483,7 @@ describe('dsh-tool-workflow', () => {
         id: session.id, options: {}, session, model: unsupportedModel(),
         inbox: createInboxStub(), status: 'idle', ctx,
         send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel: () => {},
+        changeSettings: async (_change, apply) => apply(),
         runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
       }
       await ctx.agents.register(parent)
@@ -714,6 +715,7 @@ describe('dsh-tool-workflow', () => {
         id: session.id, options: {}, session, model: unsupportedModel(),
         inbox: createInboxStub(), status: 'idle', ctx,
         send: () => {}, followup: () => {}, steer: () => {}, inject: () => {}, cancel: () => {},
+        changeSettings: async (_change, apply) => apply(),
         runMaintenance: task => task(new AbortController().signal), whenIdle: () => Promise.resolve(),
       }
       await ctx.agents.register(parent)

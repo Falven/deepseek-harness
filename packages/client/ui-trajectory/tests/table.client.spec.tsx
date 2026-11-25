@@ -221,6 +221,26 @@ describe('TrajectoryTable', () => {
     expect(screen.getByText('2 个工具调用 · bash')).toBeTruthy()
   })
 
+  it.each([false, true])('keeps Session tools outside assistant disclosure with native calls: %s', (nativeCalls) => {
+    const assistant = TURNS[0]!.groups[0]!.cells[0]!
+    const onToggleAssistant = vi.fn()
+    const turns: readonly TrajectoryTurnModel[] = [
+      { turn: 1, groups: [{ title: 'Step 1', cells: nativeCalls ? TURNS[0]!.groups[0]!.cells : [assistant] }] },
+      { turn: null, groups: [{ title: 'Host', cells: [{
+        index: 4, kind: 'tool', callId: 'host-action', text: 'independent action', timeSeconds: null,
+      }] }] },
+    ]
+    render(<TrajectoryTable
+      turns={turns} {...FOLD_PROPS}
+      collapsedAssistants={new Set([trajectoryRecordId(assistant)])}
+      onToggleAssistant={onToggleAssistant}
+    />)
+    expect(screen.getByRole('row', { name: /independent action/ })).toBeTruthy()
+    expect(screen.queryByText('2 tool calls · bash') !== null).toBe(nativeCalls)
+    fireEvent.doubleClick(screen.getByRole('row', { name: /ASSISTANT.*Checking files/ }))
+    expect(onToggleAssistant).toHaveBeenCalledTimes(nativeCalls ? 1 : 0)
+  })
+
   it('shows assistant timing facts after keyboard selection', () => {
     render(<TrajectoryTable turns={TURNS} {...FOLD_PROPS} />)
     fireEvent.keyDown(screen.getByRole('row', { name: /ASSISTANT/ }), { key: 'Enter' })

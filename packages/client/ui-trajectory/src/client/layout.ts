@@ -29,7 +29,7 @@ export interface TrajectoryGroupModel {
   cells: readonly TrajectoryCellProps[]
 }
 
-/** One sticky turn, or a standalone compaction section between turns. */
+/** One chronological turn segment or independent Session activity section. */
 export interface TrajectoryTurnModel {
   turn: number | null
   groups: readonly TrajectoryGroupModel[]
@@ -44,6 +44,7 @@ export interface TrajectoryLayoutInput {
   runningCalls: TrajectorySnapshot['runningCalls']
   requests?: readonly RequestView[]
   callSchemas?: RequestInspectionSnapshot['callSchemas']
+  hostCallStartSeqs?: TrajectorySnapshot['hostCallStartSeqs']
 }
 
 interface UsageLike {
@@ -81,6 +82,11 @@ type InputNode = Extract<
 >
 
 type OrderedLayoutEntry =
+  | {
+    kind: 'host-call'
+    seq: number
+    call: TrajectorySnapshot['runningCalls'][number]
+  }
   | {
     kind: 'node'
     seq: number
@@ -245,6 +251,32 @@ export function deriveTrajectoryLayout(
     else existing.laid.splice(request, 0, ...laid)
   }
 
+  const pushRunningCall = (call: TrajectorySnapshot['runningCalls'][number]) => {
+    if (call.phase === 'preparing') return
+    const laidList: LaidCell[] = [{
+      absTime: null,
+      toolName: call.name,
+      callId: call.callId,
+      subCalls: call.subCalls,
+      cell: {
+        index: ++index,
+        kind: 'tool',
+        ...summarizeCall(call.name, call.argsRaw),
+        inputDetail: call.argsRaw,
+        callId: call.callId,
+        timeSeconds: null,
+        startedAt: finiteTime(call.time),
+      },
+    }]
+    for (const laid of expandSubCalls(call.subCalls, index, t)) {
+      laidList.push(laid)
+      index = laid.cell.index
+    }
+    if (call.step !== null && call.turn !== null && call.step > 0) pushStep(call.turn, call.step, laidList)
+    else if (call.turn === null) standaloneCompactions.push({ groups: [{ title: call.source?.name ?? call.name, laid: laidList }] })
+    else for (const laid of laidList) pushMessage(call.turn, laid)
+  }
+
   const representedRequests = new Set<string>()
   for (const node of nodes) {
     if (node.kind === 'assistant' && node.step > 0) {
@@ -255,7 +287,7 @@ export function deriveTrajectoryLayout(
     representedRequests.add(`${partial.turn}\u0000${partial.step}`)
   }
   for (const call of runningCalls) {
-    if (call.step > 0) representedRequests.add(`${call.turn}\u0000${call.step}`)
+    if (call.step !== null && call.turn !== null && call.step > 0) representedRequests.add(`${call.turn}\u0000${call.step}`)
   }
 
   const entries: OrderedLayoutEntry[] = [
@@ -265,9 +297,14 @@ export function deriveTrajectoryLayout(
     })),
     ...nodes.map((node, nodeIndex) => ({
       kind: 'node' as const,
-      seq: node.seq,
+      seq: node.kind === 'tool-result' ? input.hostCallStartSeqs?.get(node.callId) ?? node.seq : node.seq,
       node,
       nodeIndex,
+    })),
+    ...runningCalls.filter(call => call.source !== undefined).map(call => ({
+      kind: 'host-call' as const,
+      seq: input.hostCallStartSeqs?.get(call.callId) ?? Number.MAX_SAFE_INTEGER,
+      call,
     })),
     ...requests
       .filter((request): request is CompactionRequestView =>
@@ -301,6 +338,10 @@ export function deriveTrajectoryLayout(
   ].sort((left, right) => layoutEntryOrder(left) - layoutEntryOrder(right))
 
   for (const entry of entries) {
+    if (entry.kind === 'host-call') {
+      pushRunningCall(entry.call)
+      continue
+    }
     if (entry.kind === 'request') {
       const { request } = entry
       pushStep(request.turn, request.step, [{
@@ -464,8 +505,8 @@ export function deriveTrajectoryLayout(
               ? summarizeCall(node.call.name, node.call.argsRaw)
               : resultAsText(resultPreview)),
             ...(node.call !== null ? { inputDetail: node.call.argsRaw } : {}),
-            outputDetail: detailResult(node, t),
-            resultSeq: node.seq,
+            outputDetail: node.source ? JSON.stringify(node, null, 2) : detailResult(node, t),
+            ...node.source === undefined ? { resultSeq: node.seq } : {},
             outputBlocks: node.content.map(block => sourceBlock(block)),
             ...resultPreview,
             callId: node.callId,
@@ -478,9 +519,10 @@ export function deriveTrajectoryLayout(
           laidList.push(laid)
           index = laid.cell.index
         }
-        pushStep(0, 1, laidList)
+        if (node.source) standaloneCompactions.push({ groups: [{ title: node.source.name, laid: laidList }] })
+        else pushStep(0, 1, laidList)
       }
-      prevAbsTime = finiteTime(node.time) ?? prevAbsTime
+      if (node.source === undefined) prevAbsTime = finiteTime(node.time) ?? prevAbsTime
     }
   }
 
@@ -507,28 +549,8 @@ export function deriveTrajectoryLayout(
 
   const seenCalls = collectCallIds(turns)
   for (const call of runningCalls) {
-    if (call.phase === 'preparing' || seenCalls.has(call.callId)) continue
-    const laidList: LaidCell[] = [{
-      absTime: null,
-      toolName: call.name,
-      callId: call.callId,
-      subCalls: call.subCalls,
-      cell: {
-        index: ++index,
-        kind: 'tool',
-        ...summarizeCall(call.name, call.argsRaw),
-        inputDetail: call.argsRaw,
-        callId: call.callId,
-        timeSeconds: null,
-        startedAt: finiteTime(call.time),
-      },
-    }]
-    for (const laid of expandSubCalls(call.subCalls, index, t)) {
-      laidList.push(laid)
-      index = laid.cell.index
-    }
-    if (call.step > 0) pushStep(call.turn, call.step, laidList)
-    else for (const laid of laidList) pushMessage(call.turn, laid)
+    if (call.source !== undefined || seenCalls.has(call.callId)) continue
+    pushRunningCall(call)
   }
 
   // Orphan turn-0 cells (orphaned tools) fold into Turn 1.
@@ -547,9 +569,28 @@ export function deriveTrajectoryLayout(
     }
   }
 
+  const standalone = standaloneCompactions.map(entry => toTurnModel(null, entry, t))
+  const boundaries = standalone.map(firstCellIndex).sort((left, right) => left - right)
   return [
-    ...[...turns.entries()].map(([turn, entry]) => toTurnModel(turn, entry, t)),
-    ...standaloneCompactions.map(entry => toTurnModel(null, entry, t)),
+    ...[...turns.entries()].flatMap(([turn, entry]) => {
+      const segments = new Map<number, TurnBucket>()
+      for (const group of entry.groups) {
+        const partitions = new Map<number, LaidCell[]>()
+        for (const laid of group.laid) {
+          const position = boundaries.findLastIndex(boundary => boundary < laid.cell.index)
+          const partition = partitions.get(position) ?? []
+          partition.push(laid)
+          partitions.set(position, partition)
+        }
+        for (const [position, laid] of partitions) {
+          const segment: TurnBucket = segments.get(position) ?? { groups: [] }
+          segment.groups.push({ title: group.title, laid })
+          segments.set(position, segment)
+        }
+      }
+      return [...segments.values()].map(segment => toTurnModel(turn, segment, t))
+    }),
+    ...standalone,
   ].sort((left, right) => firstCellIndex(left) - firstCellIndex(right))
 }
 
@@ -581,11 +622,15 @@ export function appendTrajectoryPartialLayout(
       cells: group.cells.map(cell => ({ ...cell, index: cell.index + lastIndex })),
     })),
   }
-  const turnIndex = turns.findIndex(turn => turn.turn === streamed.turn)
+  const turnIndex = turns.findLastIndex(turn => turn.turn === streamed.turn)
   if (turnIndex === -1) return [...turns, streamed]
   const current = turns[turnIndex]
-  /* v8 ignore next -- findIndex proved the dense array position exists. */
+  /* v8 ignore next -- findLastIndex proved the dense array position exists. */
   if (current === undefined) return turns
+  if (turnIndex < turns.length - 1
+    && !streamed.groups.some(group => current.groups.some(existing => existing.title === group.title))) {
+    return [...turns, streamed]
+  }
   const groups = [...current.groups]
   for (const streamedGroup of streamed.groups) {
     const groupIndex = groups.findIndex(group => group.title === streamedGroup.title)

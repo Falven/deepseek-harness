@@ -36,6 +36,9 @@ type BoundStreamOpener = (
   window: RemoteUplinkWindow,
 ) => Promise<AsyncIterable<unknown>>
 
+/** Request scope applied to each logical stream opened on one socket. */
+type StreamScope = (next: () => Promise<void>) => Promise<void>
+
 /** Convert an invocation or carrier failure to a stable wire value. */
 export type RemoteStreamFailureMapper = (error: unknown) => RemoteStreamFailure
 
@@ -94,8 +97,9 @@ export class RemoteStreamMuxServer {
    * @param socket - carrier socket transferred to the WebSocket server.
    * @param head - bytes already read after the HTTP upgrade headers.
    * @param peer - Peer the upgrade was admitted as.
+   * @param scope - optional scope bound to the upgrade request for each logical stream.
    */
-  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, peer: PeerScope): void {
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, peer: PeerScope, scope?: StreamScope): void {
     this.server.handleUpgrade(req, socket, head, (websocket) => {
       const release = bindPeer(websocket, peer)
       if (release === undefined) return
@@ -105,7 +109,7 @@ export class RemoteStreamMuxServer {
       const bound: BoundStreamOpener = (endpoint, payload, uplink, control, window) =>
         this.open(endpoint, payload, uplink, peer, control, window)
       const connection = new RemoteStreamMuxConnection(
-        websocket, bound, this.failure, this.streamInboxBytes, this.streamOutboxBytes, this.compression, alive,
+        websocket, bound, this.failure, this.streamInboxBytes, this.streamOutboxBytes, this.compression, alive, scope,
       )
       const done = connection.run().catch((error: unknown) => {
         console.error('[api-gateway] Remote stream connection failed:', error)
@@ -182,6 +186,7 @@ class RemoteStreamMuxConnection {
     private readonly streamOutboxBytes: number,
     private readonly compression: boolean,
     private readonly alive: () => void,
+    private readonly scope?: StreamScope,
   ) {}
 
   /**
@@ -270,10 +275,47 @@ class RemoteStreamMuxConnection {
       done: Promise.resolve(),
     }
     this.streams.set(message.streamId, active)
-    const done = this.pump(message.streamId, message.endpoint, message.payload, active)
+    const done = this.pumpWithScope(message.streamId, message.endpoint, message.payload, active)
     active.done = done
     const remove = (): void => { this.streams.delete(message.streamId) }
     void done.then(remove, remove)
+  }
+
+  private async pumpWithScope(
+    streamId: string,
+    endpoint: string,
+    payload: unknown,
+    active: ActiveStream,
+  ): Promise<void> {
+    const scope = this.scope
+    if (scope === undefined) return this.pump(streamId, endpoint, payload, active)
+    let pump: Promise<void> | undefined
+    let rejected = false
+    let failure: unknown
+    try {
+      await scope(() => {
+        pump ??= this.pump(streamId, endpoint, payload, active)
+        return pump
+      })
+    } catch (error) {
+      rejected = true
+      failure = error
+    }
+    if (pump !== undefined) {
+      // The pump owns its terminal frame once delegation begins.
+      await pump
+      if (rejected) console.error('[api-gateway] Remote stream scope failed after dispatch:', failure)
+      return
+    }
+    active.inbox.fail(new Error('Remote stream ended'))
+    if (active.abort.signal.aborted) {
+      const reason: unknown = active.abort.signal.reason
+      if (remoteErrorOf(reason) !== undefined) await this.sendFailure(streamId, reason)
+      return
+    }
+    await this.sendFailure(streamId, rejected
+      ? failure
+      : new Error('api gateway: Remote stream request scope did not delegate'))
   }
 
   private async pump(

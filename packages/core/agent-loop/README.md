@@ -72,6 +72,8 @@ Every inbox mutation commits one normalized `agent/inbox/spliced` event. The pro
 
 ### What a step does
 
+The loop awaits `agent/before-turn` before opening a turn and `agent/prepare-step` before claiming the proposed batch. It checks each proposed message is still the exact pending object after preparation; a concurrent edit fails that step before any claim, while later arrivals remain queued. Scoped providers can therefore prepare the execution world before the model request sees the input. Full handle disposal clears pending input; an ordinary native cancellation may preserve it through `keepInbox`.
+
 Each step sends derived Session history and its visible tool schemas. System messages contain the initial instructions and subsequent section updates. Tool calls run through the guarded pipeline, and every model-visible fact is logged before the request is derived. The loop passes the complete raw call batch to `ctx.tools.execute()`; built-in executors preserve model-order results and exclusive barriers. Cancellation aborts current activity and, unless `keepInbox` is set, clears pending work; an interrupted stream finalizes the text already delivered.
 
 -----

@@ -13,7 +13,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest'
 import {
   boot, composeEntries, initProfile, loadProfileDirectory, readProfilePatches, readProfileManifest,
   reconcileProfilePatches, PluginPackages, readPluginMeta, getDshRuntimeVersion,
-  type ProfileContext, type RuntimeResolution,
+  ProfileReloadDeferred, type ProfileContext, type ProfileReloadOutcome, type RuntimeResolution,
 } from '@deepseek-ai/dsh-app-boot'
 import { OPTIONAL_BUNDLES, OFFICIAL_ON_DEMAND_CATALOG } from '@deepseek-ai/dsh-official-bundles'
 import PluginManager, { type Config, type PluginChange, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
@@ -898,6 +898,55 @@ it.each(['[', 'allowBuilds: false\n'])('preserves pnpm diagnostics when pending 
   const run = vi.spyOn(operations, 'runProfilePnpm').mockResolvedValue({ exitCode: 1, output: 'original pnpm failure', truncated: false, logPath: '/log' })
   onTestFinished(() => { run.mockRestore() })
   expect(await manager.installBundle('addon')).toMatchObject({ application: 'failed', error: { diagnostic: 'original pnpm failure' } })
+})
+
+it('waits for deferred activation before removing a deselected package', async () => {
+  const { manager, ctx, dir } = await fixture()
+  const completion = Promise.withResolvers<ProfileReloadOutcome>()
+  let resume: (() => Promise<ProfileReloadOutcome>) | undefined
+  ctx.on('app-boot/profile-reload', (_profile, next) => {
+    resume = next
+    throw new ProfileReloadDeferred(completion.promise)
+  })
+  const remove = vi.spyOn(operations, 'runProfilePnpm').mockImplementation(async () => {
+    expect([...ctx.loader.entries()].some(row => row.id === 'include:managed')).toBe(false)
+    const manifest = readProfileManifest('test', dir)
+    delete manifest.dependencies?.extra
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    return { exitCode: 0, output: '', truncated: false, logPath: join(dir, 'pnpm.log') }
+  })
+  onTestFinished(() => { remove.mockRestore() })
+  expect(await manager.removeBundle('extra')).toMatchObject({ changed: true, application: 'restart-required' })
+  expect(remove).not.toHaveBeenCalled()
+  if (resume === undefined) throw new Error('Deferred continuation missing')
+  completion.resolve(await resume())
+  await vi.waitFor(() => { expect(remove).toHaveBeenCalledOnce() })
+})
+
+it('does not remove a bundle re-enabled while its earlier removal waits for activation', async () => {
+  const { manager, ctx } = await fixture()
+  const completion = Promise.withResolvers<ProfileReloadOutcome>()
+  let resume: (() => Promise<ProfileReloadOutcome>) | undefined
+  let defer = true
+  ctx.on('app-boot/profile-reload', (_profile, next) => {
+    if (!defer) return next()
+    defer = false
+    resume = next
+    throw new ProfileReloadDeferred(completion.promise)
+  })
+  const remove = vi.spyOn(operations, 'runProfilePnpm')
+  const errors = vi.spyOn(ctx.logger, 'error').mockImplementation(() => {})
+  onTestFinished(() => { remove.mockRestore(); errors.mockRestore() })
+  expect(await manager.removeBundle('extra')).toMatchObject({ changed: true, application: 'restart-required' })
+  expect(await manager.setBundleEnabled('extra', true)).toMatchObject({ changed: true, application: 'applied' })
+  if (resume === undefined) throw new Error('Deferred continuation missing')
+  completion.resolve(await resume())
+  await vi.waitFor(() => {
+    expect(errors.mock.calls.some(([error]) => error instanceof Error
+      && error.message.includes('Deferred removal of "extra" cancelled'))).toBe(true)
+  })
+  expect(remove).not.toHaveBeenCalled()
+  expect((await manager.listBundles()).find(bundle => bundle.name === 'extra')?.enabled).toBe(true)
 })
 
 it('unloads before removing packages and retries inactive dependencies whose files are missing', async () => {

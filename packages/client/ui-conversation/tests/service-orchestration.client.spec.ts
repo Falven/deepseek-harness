@@ -77,6 +77,23 @@ async function bench(maxConcurrentFileUploads: number | 'absent' = 2) {
 }
 
 describe('ConversationController', () => {
+  it('captures submission context before the draft is sent', async () => {
+    const b = await bench()
+    let context = 'first'
+    b.runtime.ctx.on('conversation/prepare-content', async (_payload, next) => {
+      const captured = context
+      return [...await next(), { type: 'text', text: captured }]
+    })
+    b.shell.setDraft('prompt')
+    b.shell.submit()
+    context = 'second'
+    await vi.waitFor(() => { expect(b.prompt).toHaveBeenCalledOnce() })
+    expect(b.prompt.mock.calls[0]?.[0]).toEqual([
+      { type: 'text', text: 'prompt' }, { type: 'text', text: 'first' },
+    ])
+    await b.runtime.dispose()
+  })
+
   it('does not revive a withdrawn generation when an old input submits before scoped cleanup', async () => {
     const b = await bench()
     try {

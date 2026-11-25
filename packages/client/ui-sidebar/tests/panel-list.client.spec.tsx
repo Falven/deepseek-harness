@@ -46,6 +46,8 @@ async function bench(collapsed = false, track?: TrackProductEvent) {
     beginNavigation: vi.fn(() => new AbortController().signal),
     toggleSidebar: vi.fn(),
     selectPanel: vi.fn((activePanelId: MainPanelId | null) => { runtime.panelInfo.set({ activePanelId }) }),
+    onPanelLeave: vi.fn<ILayout['onPanelLeave']>(() => vi.fn()),
+    withPanelChange: vi.fn<ILayout['withPanelChange']>((_panelId, change) => { change(); return true }),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
   } satisfies ILayout

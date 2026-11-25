@@ -16,6 +16,8 @@ import css from './dockkit.module.css'
 export interface TabRetention {
   /** Whether a visited body survives hiding; omitted means visibility-mounted. */
   readonly keepMounted?: (tab: TabRecord) => boolean
+  /** Keep the same connected body until this cleanup settles after logical removal. */
+  readonly retireTab?: (tab: TabRecord) => Promise<void> | undefined
   /** Whether this layout's Session is on screen; defaults to true. */
   readonly active?: boolean
 }
@@ -29,6 +31,7 @@ interface LayoutProps extends TabRetention {
 
 interface TabHostProps extends LayoutProps {
   readonly tab: TabRecord
+  readonly retiring?: boolean
   readonly pane: PaneNode
   readonly column: number
   readonly floats: ReturnType<typeof useFloatGestures>
@@ -39,9 +42,9 @@ interface TabHostProps extends LayoutProps {
 
 /** A tab's ancestors stay identical across selection, pane moves and floating. */
 function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRequest, offsets, keepMounted,
-  active = true }: TabHostProps): ReactNode {
+  active = true, retiring = false }: TabHostProps): ReactNode {
   const floating = pane.host === 'float'
-  const selected = floating || pane.activeTabId === tab.id
+  const selected = !retiring && (floating || pane.activeTabId === tab.id)
   const visible = active && selected && (floating || state.expanded)
   const retained = keepMounted?.(tab) ?? false
   const [visited, setVisited] = useState(visible)
@@ -119,6 +122,29 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
  */
 export function TabLayout(props: LayoutProps): ReactNode {
   const { state, callbacks, preview } = props
+  const bodies = useRef(new Map<number, { tab: TabRecord; pane: PaneNode; props: LayoutProps; retiring: boolean }>())
+  const nextBody = useRef(0)
+  const [, redraw] = useState(0)
+  const pending = useRef(new Set<number>())
+  for (const body of bodies.current.values()) {
+    if (state.tabs[body.tab.id] === undefined) body.retiring = true
+  }
+  for (const tab of Object.values(state.tabs)) {
+    const body = [...bodies.current.values()].find(body => !body.retiring && body.tab.id === tab.id)
+    const current = { tab, pane: findTabPane(state, tab.id), props, retiring: false }
+    if (body) Object.assign(body, current)
+    else bodies.current.set(nextBody.current++, current)
+  }
+  useLayoutEffect(() => {
+    for (const [key, body] of bodies.current) {
+      if (!body.retiring || pending.current.has(key)) continue
+      pending.current.add(key)
+      const remove = (): void => { bodies.current.delete(key); pending.current.delete(key); redraw(value => value + 1) }
+      const cleanup = body.props.retireTab?.(body.tab)
+      if (cleanup === undefined) remove()
+      else void cleanup.then(remove, (error: unknown) => { console.error('Tab cleanup failed:', error); remove() })
+    }
+  })
   const focusRequest = useRef<{ readonly tabId: TabId; readonly origin: Element | null }>(undefined)
   // Each pane's strip remounts under the newly selected tab's host.
   const [offsets] = useState(() => new Map<PaneId, number>())
@@ -143,9 +169,10 @@ export function TabLayout(props: LayoutProps): ReactNode {
     <div className={css.tabLayout} data-dockkit-split={root.kind === 'split' ? root.id : undefined}
       style={{ gridTemplateColumns: columns }}>
       {/* Logical order changes must not make React move a connected webview's ancestor. */}
-      {Object.values(state.tabs).sort((a, b) => a.id.localeCompare(b.id)).map((tab) => {
-        const pane = findTabPane(state, tab.id)
-        return <TabHost key={tab.id} {...props} callbacks={tabCallbacks} tab={tab} pane={pane}
+      {[...bodies.current].map(([key, body]) => {
+        const { tab, pane, retiring } = body
+        return <TabHost key={key} {...(retiring ? body.props : props)} callbacks={retiring ? body.props.callbacks : tabCallbacks}
+          tab={tab} pane={pane} retiring={retiring}
           column={panes.findIndex(candidate => candidate.id === pane.id)} floats={floats} focusRequest={focusRequest} offsets={offsets} />
       })}
       {panes.filter(pane => pane.tabs.length === 0).map(pane => (

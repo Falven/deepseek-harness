@@ -43,12 +43,17 @@
     "@deepseek-ai/dsh-llm": "workspace:*",
     "@deepseek-ai/dsh-scope": "workspace:*",
     "@deepseek-ai/dsh-session": "workspace:*",
+    "@deepseek-ai/dsh-session-projection": "workspace:*",
     "@deepseek-ai/dsh-system-prompt": "workspace:*",
     "@deepseek-ai/dsh-user-approval": "workspace:*"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-session-projection": { "optional": true }
+  },
   "dependencies": {
     "@deepseek-ai/dsh-util-values": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@deepseek-ai/schemastery": "workspace:~",
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-brand": "workspace:*",

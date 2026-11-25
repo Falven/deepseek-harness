@@ -1,10 +1,14 @@
 /** Git command bounds, snapshot recovery, and diff failure reporting. */
 import { chmod, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { GitRunner, blobText, diffTrees, ignoredPaths, locateGitWorkspace, snapshotTree, treeBlob } from '../src/git.ts'
+import { readCaptureBytes } from '../src/capture.ts'
+import type { WorkspaceChangesEnvironment } from '../src/environment.ts'
+import { GitRunner, blobText, diffTrees, ignoredPaths, localScratch, locateGitWorkspace, snapshotTree, treeBlob } from '../src/git.ts'
+import { canonicalPath, temporaryRoots } from '../src/paths.ts'
 import { TurnRecorder } from '../src/recorder.ts'
 import SessionStore, { type SessionId } from '@deepseek-ai/dsh-session'
 import { git, scratchDir, startTurn, toolCall } from './support.ts'
@@ -28,6 +32,15 @@ async function runner(limits = { timeoutMs: 30_000, outputMaxBytes: 1024 * 1024 
 }
 
 const signal = new AbortController().signal
+
+async function environment(ctx: Context, cwd: string, executable = 'git'): Promise<WorkspaceChangesEnvironment> {
+  return {
+    paths: { cwd: await realpath(cwd), home: await canonicalPath(homedir()), temporaryRoots: await temporaryRoots() },
+    canonicalPath, readFile: readCaptureBytes,
+    git: { subprocess: ctx.subprocess, executable: await ctx.subprocess.resolveExecutable(executable).catch(() => executable) },
+    scratch: localScratch, dispose: () => Promise.resolve(),
+  }
+}
 
 describe('GitRunner', () => {
   it('ignores ambient indexed Git configuration after the credential scrub', async () => {
@@ -87,7 +100,7 @@ describe('snapshots and diffs', () => {
     const { git: runnerGit } = await runner()
     const store = objectsIn(await scratchDir('dsh-git-store-', cleanups))
     expect(await locateGitWorkspace(runnerGit, cwd, store, signal)).toBeNull()
-    const broken = { root: cwd, gitDir: join(cwd, 'missing'), scratch: cwd, env: {}, excludes: [] }
+    const broken = { root: cwd, gitDir: join(cwd, 'missing'), scratch: cwd, env: {}, excludes: [], io: localScratch }
     await expect(snapshotTree(runnerGit, broken, signal)).rejects.toThrow('git add in')
     await expect(ignoredPaths(runnerGit, broken, ['x'], signal)).rejects.toThrow('git check-ignore failed')
     expect(await ignoredPaths(runnerGit, broken, [], signal)).toEqual(new Set())
@@ -170,26 +183,31 @@ describe('treeBlob and blobText', () => {
 describe('TurnRecorder', () => {
   it('stays silent when disposed while git work is pending, and warns on failures otherwise', async () => {
     const cwd = await scratchDir('dsh-recorder-', cleanups)
-    const { ctx, git: runnerGit } = await runner()
+    const { ctx } = await runner()
     const session = ctx.sessions.create(brandString<SessionId>('recorder'), { meta: { cwd } })
     const warnings: string[] = []
-    let release!: (runner: GitRunner | null) => void
-    const gate = new Promise<GitRunner | null>((resolve) => { release = resolve })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
     const tempRoot = await scratchDir('dsh-git-store-', cleanups)
-    const env = { git: gate, tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100, warn: (m: string) => { warnings.push(m) } }
+    const env = {
+      environment: async (directory: string) => { await gate; return environment(ctx, directory) },
+      timeoutMs: 30_000, outputMaxBytes: 1024 * 1024,
+      tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100, warn: (m: string) => { warnings.push(m) },
+    }
     const disposed = new TurnRecorder(session, cwd, env)
     disposed.start(1)
     await new Promise(resolve => setTimeout(resolve, 5))
     const disposal = disposed.dispose()
-    release(runnerGit)
+    release()
     await disposal
     disposed.start(2)
     await disposed.settled()
     expect(warnings).toEqual([])
     expect(disposed.summary(1)).toBeUndefined()
 
-    const { git: missing } = await runner(undefined, '/nonexistent/git-binary')
-    const failing = new TurnRecorder(session, cwd, { ...env, git: Promise.resolve(missing) })
+    const failing = new TurnRecorder(session, cwd, {
+      ...env, environment: () => environment(ctx, cwd, '/nonexistent/git-binary'),
+    })
     failing.start(1)
     await failing.settled()
     expect(warnings).toHaveLength(1)
@@ -198,9 +216,11 @@ describe('TurnRecorder', () => {
 
   it('removes its snapshot objects on disposal and never creates them outside a repository', async () => {
     const tempRoot = await scratchDir('dsh-git-store-', cleanups)
-    const { ctx, git: runnerGit } = await runner()
+    const { ctx } = await runner()
     const env = {
-      git: Promise.resolve(runnerGit), tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100,
+      environment: (directory: string) => environment(ctx, directory),
+      timeoutMs: 30_000, outputMaxBytes: 1024 * 1024,
+      tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100,
       warn: (m: string) => { throw new Error(m) },
     }
     const plain = new TurnRecorder(ctx.sessions.create(brandString<SessionId>('plain'), { meta: { cwd: tempRoot } }), tempRoot, env)
@@ -226,18 +246,23 @@ describe('TurnRecorder', () => {
     git(cwd, 'add', '-A'); git(cwd, 'commit', '-q', '-m', 'init')
     const tempRoot = join(cwd, 'tmp')
     await mkdir(tempRoot)
-    const { ctx, git: runnerGit } = await runner()
+    const { ctx } = await runner()
     const session = ctx.sessions.create(brandString<SessionId>('tmp-in-tree'), { meta: { cwd } })
     const env = {
-      git: Promise.resolve(runnerGit), tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100,
+      environment: (directory: string) => environment(ctx, directory),
+      timeoutMs: 30_000, outputMaxBytes: 1024 * 1024,
+      tempRoot, maxFiles: 10, maxFileBytes: 1024, diffTimeoutMs: 100,
       warn: (m: string) => { throw new Error(m) },
     }
     const recorder = new TurnRecorder(session, cwd, env)
     startTurn(session, 1)
     recorder.start(1)
     await recorder.settled()
+    const edit = { file_path: 'tracked.txt', old_string: 'one', new_string: 'one\ntwo' }
+    recorder.capture(join(cwd, 'tracked.txt'))
+    await recorder.settled()
     await writeFile(join(cwd, 'tracked.txt'), 'one\ntwo\n')
-    recorder.observe(toolCall(session, 1, 'bash', { command: 'x' }))
+    recorder.observe(toolCall(session, 1, 'edit', edit))
     await recorder.stopping(1)
     const announced = session.snapshotEvents().find(event => event.type === 'workspace/changes')
     expect(recorder.summary(announced!.seq)?.files.map(file => file.display)).toEqual(['tracked.txt'])

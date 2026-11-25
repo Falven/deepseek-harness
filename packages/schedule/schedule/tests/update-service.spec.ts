@@ -133,3 +133,23 @@ it('normalizes an equivalent edit without re-anchoring the stored target', async
   expect(await test.service.edit({ id: test.created.id, action: 'update', patch: { timing } }))
     .toMatchObject({ ...test.created, updatedAt: '2026-09-16T00:01:00.000Z' })
 })
+
+it('keeps task attribution while a paused reminder waits for an explicit edit', async () => {
+  const test = await harness()
+  tests.push(test)
+  test.ctx.on('schedule/task-source', async (request, next) => request.operation === 'create'
+    ? { source: { kind: 'schedule' }, key: 'owner' }
+    : next())
+  const record = await test.service.create({ title: 'Later', prompt: 'Later', timing, target })
+  await test.service.pauseSession(target.sessionId)
+  expect((await test.service.list({ active: true })).items).toEqual([])
+  expect(await test.service.catalog()).toEqual([expect.objectContaining({ id: record.id, status: 'paused' })])
+  expect(taskTable(test.ctx).get(record.id)).toMatchObject({
+    status: 'paused', deliverySource: { kind: 'schedule' }, deliverySourceKey: 'owner',
+  })
+  expect(await test.service.edit({ id: record.id, action: 'update', patch: { active: true } }))
+    .toMatchObject({ id: record.id, status: 'active' })
+  expect(taskTable(test.ctx).get(record.id)).toMatchObject({
+    status: 'active', deliverySource: { kind: 'schedule' }, deliverySourceKey: 'owner',
+  })
+})

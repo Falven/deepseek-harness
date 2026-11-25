@@ -39,6 +39,8 @@ A provider with a stored catalog error remains visible with its diagnostic and e
 
 After Apply closes an editor, its saved status appears when the current provider, settings, and credential snapshot is ready. Opening any row's editor, adding a provider, and opening a removal confirmation wait for that refresh. A newly opened Models section, or one retrying after a page-load failure, waits for a ready snapshot before mounting editors. A background refresh preserves an open draft while its editor remains mounted; a failed page load or provider removal can close it.
 
+`onboarding: false` disables the Web welcome and credential steps when the Client activates. Models settings remain available.
+
 Host configuration `credentialOnboarding` defaults to `true`. The Electron preload marker suppresses automatic credential onboarding and the Web welcome notice; Models settings and explicit API-key editing remain available. The [account plugin](../ui-settings-account/README.md#desktop-onboarding) owns the Desktop introduction. Other native shells can disable only the credential step with `credentialOnboarding: false`. The field is volatile and reaches the browser through the plugin's [synced Config](../modules/README.md#synced-plugin-configuration): a change decides whether a credential step that has not mounted yet opens on its own, while a step that already mounted keeps its decision, so an open step stays open. A browser that receives no value uses `true`. The field is configuration, not a durable completion marker.
 
 ### API keys
@@ -80,6 +82,8 @@ After the versioned notice step completes, the DeepSeek step projects first-run 
 ### Extension slots
 
 The section declares two seats for plugins distributed outside this repository, typed in [`src/client/slot-contract.ts`](src/client/slot-contract.ts) and exported from `./client`. `settings.models.provider-card` (keyed) renders inside every card that shows a directory row — a saved row's card, its first-run setup posture, and the add-provider draft — dispatched with `entryKey = settingsNs` and owner props carrying the row's `ConfigurableProviderView`, its configured state, and its confirmed api-key credential state, so one registration under an adapter family's namespace receives every card of that family, hand-declared routes included; the hand-declared draft card has no directory row yet and dispatches nothing until saved. `settings.models.footer` (list) renders after the rows and the add controls. A registrant activates through `ctx.slots.inject` with a type-only import of this package's `/client` entry; without registrants both seats render nothing.
+
+An adapter can select the native pi-ai editor for its own namespace through the provider directory. Its keyed `settings.models.provider-authentication` slot replaces the stock credential panel in that editor. It receives the settings draft, effective values, write state and the native Apply callbacks, and can render `settings.models.api-key` to enter a write-only credential. A namespace without a contribution keeps the native credential panel.
 
 The Models page includes **DeepSeek Account** (`deepseek-account`, **DeepSeek 账号** in Chinese). The row shows a **Signed in** status and offers no editor: the account listing supplies its models, and [model overrides](../../llm/llm-deepseek-account/README.md#use-this-package) live in `cordis.patch.yml`. The account row is hidden when its available model catalog is empty, including before sign-in and after sign-out; it returns when account models become available.
 

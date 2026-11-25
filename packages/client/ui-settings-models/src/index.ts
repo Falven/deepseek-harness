@@ -8,6 +8,7 @@ export type Config = ModelsConfig
 
 /** Credential-onboarding choice synced to the browser. */
 export const Config = z.object({
+  onboarding: z.boolean().default(true).volatile(),
   credentialOnboarding: z.boolean().default(true).volatile(),
 })
 

@@ -11,6 +11,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
   >
     <div
       class="logoRow"
+      data-sidebar-logo-row="true"
       data-window-drag="true"
     >
       <button
@@ -43,6 +44,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
         <button
           aria-label="New session"
           class="newSession"
+          data-sidebar-new-session="true"
           type="button"
         >
           <span
@@ -118,11 +120,13 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
   >
     <div
       class="logoRow"
+      data-sidebar-logo-row="true"
       data-window-drag="true"
     >
       <button
         aria-label="New session"
         class="brand wide"
+        data-sidebar-brand="true"
         type="button"
       >
         <span
@@ -203,6 +207,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
         <button
           aria-label="New session"
           class="newSession"
+          data-sidebar-new-session="true"
           type="button"
         >
           <span
@@ -284,6 +289,7 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
   >
     <div
       class="logoRow"
+      data-sidebar-logo-row="true"
       data-window-drag="true"
     >
       <button
@@ -334,6 +340,7 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
         <button
           aria-label="New session"
           class="newSession"
+          data-sidebar-new-session="true"
           type="button"
         >
           <span
@@ -409,11 +416,13 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
   >
     <div
       class="logoRow"
+      data-sidebar-logo-row="true"
       data-window-drag="true"
     >
       <button
         aria-label="New session"
         class="brand wide"
+        data-sidebar-brand="true"
         type="button"
       >
         <span
@@ -494,6 +503,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
         <button
           aria-label="New session"
           class="newSession"
+          data-sidebar-new-session="true"
           type="button"
         >
           <span
@@ -575,11 +585,13 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
   >
     <div
       class="logoRow"
+      data-sidebar-logo-row="true"
       data-window-drag="true"
     >
       <button
         aria-label="新建会话"
         class="brand wide"
+        data-sidebar-brand="true"
         type="button"
       >
         <span
@@ -660,6 +672,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
         <button
           aria-label="新建会话"
           class="newSession"
+          data-sidebar-new-session="true"
           type="button"
         >
           <span

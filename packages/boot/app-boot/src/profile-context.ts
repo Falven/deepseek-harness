@@ -25,6 +25,8 @@ export interface ProfileContext {
   readonly startedBundles: readonly string[]
   /** Absolute command-line overlay files in argv order, read on every composition and applied above profile and home patches. */
   readonly overlayPaths: readonly string[]
+  /** Host-supplied patches, evaluated after the current file overlays. */
+  readonly hostPatches?: readonly PatchOptions[]
   /** Launch-time DSH_TELEMETRY_DISABLED value; any non-empty value opts out. */
   readonly telemetryDisabledEnv: string | undefined
 }
@@ -78,6 +80,7 @@ export function readProfilePatches(binName: string, context: ProfileContext, ini
     ...(initialProfile?.patches ?? loadOptionalPatches(binName, context.patchPath) ?? []),
     ...(loadOptionalPatches(binName, join(context.home, PROFILE_PATCH_FILENAME)) ?? []),
     ...context.overlayPaths.flatMap(path => loadOverlayPatches(binName, path)),
+    ...(context.hostPatches ?? []),
   ])
   const telemetryPatch = resolveTelemetryPatch(context.telemetryDisabledEnv,
     composeEntries([patches]).some(row => row.id === TELEMETRY_ROW_ID))

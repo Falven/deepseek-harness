@@ -18,10 +18,13 @@
  */
 
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
+import type { ApiKeyFieldProps } from './ApiKeyField.tsx'
 import type { ProviderDirectoryEntry } from './store.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
+    /** Authentication controls within the native editor, keyed by settings namespace. */
+    'settings.models.provider-authentication': { kind: 'keyed'; scope: 'root'; owner: ProviderAuthenticationOwnerProps }
     /**
      * One provider card's adapter extension area, dispatched with
      * `entryKey = settingsNs` on every card that renders a directory row: a
@@ -39,6 +42,23 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'settings.models.footer': { kind: 'list'; scope: 'root'; owner: ModelsFooterOwnerProps }
   }
+  interface SlotFactoryMap {
+    /** The native write-only API-key field for authentication extensions. */
+    'settings.models.api-key': { scope: 'root'; props: ApiKeyFieldProps }
+  }
+}
+
+/** Native editor draft and credential control supplied to an authentication extension. */
+export interface ProviderAuthenticationOwnerProps {
+  provider: string
+  /** Redacted user-layer profile; field updates share the editor's Apply action. */
+  draft: Readonly<Record<string, unknown>>
+  /** Effective profile values used while the draft leaves a field unset. */
+  fallback: unknown
+  disabled: boolean
+  setField: (field: string, value: string | undefined) => void
+  /** Render through the `settings.models.api-key` factory when this method uses a key. */
+  credential: ApiKeyFieldProps
 }
 
 /** Owner share of one provider-card extension occurrence. */

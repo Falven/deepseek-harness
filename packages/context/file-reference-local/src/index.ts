@@ -21,7 +21,8 @@ import {
   type FileSearchConfig,
 } from './search.ts'
 
-export type { FileSearchConfig } from './search.ts'
+export { WorkspaceFileSearch } from './search.ts'
+export type { FileSearchConfig, FileSearchSource } from './search.ts'
 
 /** Local file-reference discovery configuration. */
 export interface Config {
@@ -42,7 +43,7 @@ export class LocalFileReferenceService extends FileReferenceService {
     excludedDirectories: z.array(z.string()).default([...DEFAULT_FILE_SEARCH_EXCLUDED_DIRECTORIES]),
   })
 
-  private readonly config: FileSearchConfig
+  protected readonly config: FileSearchConfig
   private readonly searches = new Map<Agent, { cwd: string; search: WorkspaceFileSearch }>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly promptDisposals = new Set<Promise<void>>()
@@ -115,10 +116,19 @@ export class LocalFileReferenceService extends FileReferenceService {
     let cached = this.searches.get(agent)
     if (cached?.cwd !== cwd) {
       cached?.search.dispose()
-      cached = { cwd, search: new WorkspaceFileSearch(cwd, this.config) }
+      cached = { cwd, search: this.createSearch(agent, cwd) }
       this.searches.set(agent, cached)
     }
     return cached.search.list(query, signal)
+  }
+
+  /** Construct one Agent's search in the selected execution directory.
+   * @param agent - Agent whose files are discovered.
+   * @param cwd - current working directory selected for the Agent.
+   * @returns the search cached until the directory changes or Agent disposal.
+   */
+  protected createSearch(_agent: Agent, cwd: string): WorkspaceFileSearch {
+    return new WorkspaceFileSearch(cwd, this.config)
   }
 }
 

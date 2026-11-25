@@ -6,7 +6,7 @@ import { Context, FiberState, Service } from '@deepseek-ai/cordis'
 import { parseEntryYaml, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import type { Entry, EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-hmr'
-import { composeEntries, loadProfileDirectory, readProfilePatches, reconcileProfilePatches } from '@deepseek-ai/dsh-app-boot'
+import { composeEntries, loadProfileDirectory, ProfileReloadDeferred, readProfilePatches, reconcileProfilePatches } from '@deepseek-ai/dsh-app-boot'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { isMap, isSeq, parseDocument, Scalar, visit } from 'yaml'
 
@@ -81,12 +81,13 @@ export class ConfigEditor extends Service {
   /** Validate, persist, and reconcile a plugin's next config; ordinary fields keep normal lifecycle rules.
    * @param entry Current Loader entry, also used to detect replacement during the write.
    * @param change Derive a raw config from the current entry and its inherited layer.
-   * @returns Fulfillment after Loader reconciliation completes.
+   * @returns Fulfillment after Loader reconciliation or durable Host deferral.
    */
   async edit(
     entry: Entry,
     change: (current: Record<string, unknown>, inherited: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<void> {
+    const hmr = this.ownerContext.get('hmr')
     const run = async (): Promise<void> => {
       const path = this.documentPath
       await withFileLock(join(this.ownerContext.profileContext.dir, 'package.json'), async () => {
@@ -139,15 +140,16 @@ export class ConfigEditor extends Service {
         }
         await writeFileAtomic(path, String(document), { mode: 0o600 })
         try {
-          await reconcileProfilePatches(this.ownerContext[Context.root], patches, 'dsh', [entry.options.id])
+          await reconcileProfilePatches(this.ownerContext[Context.root], patches, 'dsh', [entry.options.id],
+            hmr === undefined ? undefined : apply => hmr.runExclusive(apply))
         } catch (error) {
+          if (error instanceof ProfileReloadDeferred) return
           await writeFileAtomic(path, before, { mode: 0o600 })
           await reconcileProfilePatches(this.ownerContext[Context.root], beforePatches, 'dsh')
           throw error
         }
       })
     }
-    const hmr = this.ownerContext.get('hmr')
     await (hmr === undefined ? run() : hmr.runExclusive(run))
   }
 }

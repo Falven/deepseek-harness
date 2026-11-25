@@ -6,6 +6,7 @@
  * @module @deepseek-ai/dsh-file-reference-local/src/search
  */
 
+import type { Dirent } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FileReferenceCandidate } from '@deepseek-ai/dsh-file-reference'
@@ -56,6 +57,24 @@ export interface FileSearchConfig {
   excludedDirectories: readonly string[]
 }
 
+/** Optional directory source; omitting it retains the local host traversal. */
+export interface FileSearchSource {
+  /** List a directory; a required root read must reject on failure.
+   * @param path - directory in this source's namespace.
+   * @param signal - cancellation for the listing.
+   * @param required - true for the workspace root, false for a child.
+   * @returns directory entries; optional missing children may return an empty list.
+   */
+  readDirectory(path: string, signal: AbortSignal, required: boolean): Promise<readonly Pick<Dirent, 'name' | 'isDirectory' | 'isFile'>[]>
+  /** Resolve only directories reachable from root without following directory links.
+   * @param root - search root in this source's namespace.
+   * @param path - display path relative to root.
+   * @param signal - cancellation for the lookup.
+   * @returns the resolved directory, or undefined when unavailable.
+   */
+  resolveDirectory(root: string, path: string, signal: AbortSignal): Promise<string | undefined>
+}
+
 interface IndexedPath extends FileReferenceCandidate {}
 
 interface RankedPath {
@@ -92,6 +111,7 @@ export class WorkspaceFileSearch {
   constructor(
     private readonly root: string,
     private readonly config: FileSearchConfig,
+    private readonly source?: FileSearchSource,
   ) {
     if (!Number.isSafeInteger(config.maxResults) || config.maxResults <= 0) {
       throw new Error('file search maxResults must be a positive safe integer')
@@ -212,9 +232,11 @@ export class WorkspaceFileSearch {
       // candidates, but an unreadable root means the traversal learned
       // nothing. Letting that settle would publish an empty index over
       // entries that are still good and leave no invalidation to retry from.
-      const entries = cursor === 0
-        ? await readWorkspaceRoot(directory.absolute, signal)
-        : await readDirectory(directory.absolute, signal)
+      const entries = this.source
+        ? await this.source.readDirectory(directory.absolute, signal, cursor === 0)
+        : cursor === 0
+          ? await readWorkspaceRoot(directory.absolute, signal)
+          : await readDirectory(directory.absolute, signal)
       for (const entry of entries) {
         signal.throwIfAborted()
         const path = directory.relative === '' ? entry.name : `${directory.relative}/${entry.name}`
@@ -237,9 +259,13 @@ export class WorkspaceFileSearch {
     signal: AbortSignal,
   ): Promise<FileReferenceCandidate[]> {
     if (displayDirectory.split('/').some(segment => this.excludedDirectories.has(segment))) return []
-    const absolute = await resolveDisplayDirectory(this.root, displayDirectory, signal)
+    const absolute = this.source
+      ? await this.source.resolveDirectory(this.root, displayDirectory, signal)
+      : await resolveDisplayDirectory(this.root, displayDirectory, signal)
     if (absolute === undefined) return []
-    const entries = await readDirectory(absolute, signal)
+    const entries = this.source
+      ? await this.source.readDirectory(absolute, signal, false)
+      : await readDirectory(absolute, signal)
     const candidates: FileReferenceCandidate[] = []
     for (const entry of entries) {
       if (entry.name.startsWith('.') && !fragment.startsWith('.')) continue
