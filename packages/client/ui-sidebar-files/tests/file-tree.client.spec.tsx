@@ -285,7 +285,7 @@ describe('FileTree', () => {
     expect(view.container.querySelectorAll('[aria-current]')).toHaveLength(1)
     expect(currentRef).toHaveBeenLastCalledWith(current)
     rerender({ expanded: [], current: 'pr/src/file2.ts', currentRef })
-    expect(currentRef).toHaveBeenLastCalledWith(null)
+    expect(currentRef.mock.lastCall?.[0]).toBeNull()
   })
 })
 

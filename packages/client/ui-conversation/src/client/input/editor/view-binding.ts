@@ -1,5 +1,5 @@
 /** DOM and keymap bindings installed by the InputBar's existing effects. */
-import type { MouseEvent, MutableRefObject, RefObject } from 'react'
+import type { MouseEvent, RefObject } from 'react'
 import type { LexicalEditor } from 'lexical'
 import { $getRoot } from 'lexical'
 import { focusWithoutRing, isMobileDevice } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -16,7 +16,7 @@ import { DRAFT_SUBMITTED_TAG } from './runtime.ts'
  * @param destination - stable, focusable non-text element that retains the composer's keyboard position.
  * @returns the update-listener cleanup.
  */
-export function installDraftKeyboardDismissal(editor: LexicalEditor, destination: RefObject<HTMLElement>): () => void {
+export function installDraftKeyboardDismissal(editor: LexicalEditor, destination: RefObject<HTMLElement | null>): () => void {
   return editor.registerUpdateListener(({ editorState, tags }) => {
     if (!tags.has(DRAFT_SUBMITTED_TAG) || !isMobileDevice()) return
     const input = editor.getRootElement()
@@ -46,7 +46,7 @@ interface DraftViewGate {
  * Reveal the DOM selection within the draft's own scrollport.
  * @param scrollRef - the InputBar-owned scrollport reference.
  */
-export function revealDraftSelection(scrollRef: RefObject<HTMLDivElement>): void {
+export function revealDraftSelection(scrollRef: RefObject<HTMLDivElement | null>): void {
   const scrollEl = scrollRef.current
   if (scrollEl === null || scrollEl.scrollHeight <= scrollEl.clientHeight) return
   const selection = window.getSelection()
@@ -83,7 +83,7 @@ export function focusDraftEditor(editor: LexicalEditor, revealSelection: () => v
  * @param scrollRef - the InputBar-owned scrollport reference.
  * @returns the listener cleanup, or undefined when the element is absent.
  */
-export function installDraftWheel(scrollRef: RefObject<HTMLDivElement>): (() => void) | undefined {
+export function installDraftWheel(scrollRef: RefObject<HTMLDivElement | null>): (() => void) | undefined {
   const el = scrollRef.current
   if (el === null) return
   const onWheel = (e: WheelEvent): void => {
@@ -108,8 +108,8 @@ export function installDraftWheel(scrollRef: RefObject<HTMLDivElement>): (() => 
  */
 export function installDraftFilePicker(
   keyboard: ComposerKeyboard,
-  gate: MutableRefObject<Pick<DraftViewGate, 'canAcceptDrop'>>,
-  fileInputRef: RefObject<HTMLInputElement>,
+  gate: RefObject<Pick<DraftViewGate, 'canAcceptDrop'>>,
+  fileInputRef: RefObject<HTMLInputElement | null>,
 ): () => void {
   return keyboard.bindFilePicker({
     available: () => gate.current.canAcceptDrop && fileInputRef.current !== null && !fileInputRef.current.disabled,
@@ -127,7 +127,7 @@ export function installDraftFilePicker(
 export function installDraftKeymap(
   editor: LexicalEditor,
   keyboard: ComposerKeyboard,
-  gate: MutableRefObject<DraftViewGate>,
+  gate: RefObject<DraftViewGate>,
 ): () => void {
   return registerComposerKeymap(editor, {
     arbitrate: (key, composing) => keyboard.arbitrate(key, composing),

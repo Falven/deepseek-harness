@@ -1,6 +1,6 @@
 /** Stable tab siblings in one horizontal Grid, including viewport-positioned floats. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { MutableRefObject, ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import clsx from 'clsx'
 import type { DockIntents } from '../contract/adapter.ts'
 import type { LayoutState, PaneId, PaneNode, TabId, TabRecord } from '../contract/types.ts'
@@ -32,7 +32,7 @@ interface TabHostProps extends LayoutProps {
   readonly pane: PaneNode
   readonly column: number
   readonly floats: ReturnType<typeof useFloatGestures>
-  readonly focusRequest: MutableRefObject<{ readonly tabId: TabId; readonly origin: Element | null } | undefined>
+  readonly focusRequest: RefObject<{ readonly tabId: TabId; readonly origin: Element | null } | undefined>
   /** Chip-box offsets by pane, read and recorded by each selected tab's strip. */
   readonly offsets: Map<PaneId, number>
 }
@@ -119,7 +119,7 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
  */
 export function TabLayout(props: LayoutProps): ReactNode {
   const { state, callbacks, preview } = props
-  const focusRequest = useRef<{ readonly tabId: TabId; readonly origin: Element | null }>()
+  const focusRequest = useRef<{ readonly tabId: TabId; readonly origin: Element | null }>(undefined)
   // Each pane's strip remounts under the newly selected tab's host.
   const [offsets] = useState(() => new Map<PaneId, number>())
   const tabCallbacks: PaneCallbacks = {

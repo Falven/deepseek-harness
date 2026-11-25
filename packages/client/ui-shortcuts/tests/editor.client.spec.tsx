@@ -110,7 +110,7 @@ async function mount(options: {
     describeBinding={options.describe ?? describeBinding}
     recording={recording} t={makeTranslate(en)}
     onClose={onClose} onSaved={onSaved} onError={onError} />)
-  if (options.recording === undefined) await waitFor(() => { expect((screen.getByRole('button', { name: 'Press a shortcut' })).hasAttribute('disabled')).toBe(false) })
+  if (options.recording === undefined) await waitFor(() => { expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Press a shortcut' })) })
   return { registry, persistence, storage, onClose, onSaved, onError, recording, view }
 }
 const press = (code: string, extra: KeyboardEventInit = {}) => {

@@ -90,6 +90,8 @@ const THREAD: ForgeReviewThread = reviewThread({
 /** The reads and writes of a changes view showing #7 with `threads`, each recorded. */
 function changesFaces(threads: readonly ForgeReviewThread[] = []): ReviewChangesFace {
   const local = async (): Promise<never> => await Promise.reject(new Error('no local changes'))
+  // Like the mounted face, one queue per tab id, so every render of a tab reads and writes the same records.
+  const queues = new Map<string, ReviewQueue>()
   return {
     localDiff: vi.fn(local),
     diffBases: vi.fn(local),
@@ -107,7 +109,11 @@ function changesFaces(threads: readonly ForgeReviewThread[] = []): ReviewChanges
     })),
     changeRequestReviewWrite: vi.fn(async () => ok({ ok: true as const })),
     submitReview: vi.fn(async () => ok({ ok: true as const, url: URL7 })),
-    reviewQueue: vi.fn(() => new ReviewQueue('review-page-test')),
+    reviewQueue: vi.fn(({ id }: { readonly id: string }) => {
+      const queue = queues.get(id) ?? new ReviewQueue('review-page-test')
+      queues.set(id, queue)
+      return queue
+    }),
     openLink: vi.fn(),
     copyPath: vi.fn(),
     createChangeRequest: vi.fn(),

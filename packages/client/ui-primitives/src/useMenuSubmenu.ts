@@ -16,7 +16,7 @@ export function menuHoverAllowed(event: { pointerType: string }): boolean {
 
 interface MenuSubmenu {
   entry: (MenuItem & { submenu: readonly MenuEntry[] }) | undefined
-  panelRef: RefObject<HTMLDivElement>
+  panelRef: RefObject<HTMLDivElement | null>
   /** CSS anchor name of the root card's anchor box; the child card is placed against it. */
   parentAnchor: string
   /** Whether the layout mode for the current child is known; the card stays hidden until it is. */
@@ -42,8 +42,8 @@ export function useMenuSubmenu(options: {
   open: boolean
   items: readonly MenuEntry[]
   footer: readonly MenuEntry[] | undefined
-  listRef: RefObject<HTMLDivElement>
-  searchRowsRef: RefObject<HTMLDivElement>
+  listRef: RefObject<HTMLDivElement | null>
+  searchRowsRef: RefObject<HTMLDivElement | null>
   refocusAnchor: () => void
 }): MenuSubmenu {
   const { open, items, footer, listRef, searchRowsRef, refocusAnchor } = options
